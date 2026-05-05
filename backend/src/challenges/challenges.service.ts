@@ -33,7 +33,7 @@ export class ChallengesService {
       params,
     );
 
-    return { challenges };
+    return { challenges: challenges.map(this.parseChallenge) };
   }
 
   async findOne(slugOrId: string, userId?: string) {
@@ -60,7 +60,7 @@ export class ChallengesService {
       );
     }
 
-    return { ...challenge, test_cases, user_stats };
+    return { ...this.parseChallenge(challenge), test_cases, user_stats };
   }
 
   async create(dto: CreateChallengeDto, userId: string) {
@@ -103,7 +103,8 @@ export class ChallengesService {
       }
     });
 
-    return this.db.queryOne('SELECT * FROM challenges WHERE id = ?', [challengeId]);
+    const created = await this.db.queryOne('SELECT * FROM challenges WHERE id = ?', [challengeId]);
+    return this.parseChallenge(created);
   }
 
   async update(id: string, dto: Partial<CreateChallengeDto>) {
@@ -121,7 +122,8 @@ export class ChallengesService {
     if (!fields.length) return challenge;
     params.push(id);
     await this.db.execute(`UPDATE challenges SET ${fields.join(', ')} WHERE id = ?`, params);
-    return this.db.queryOne('SELECT * FROM challenges WHERE id = ?', [id]);
+    const updated = await this.db.queryOne('SELECT * FROM challenges WHERE id = ?', [id]);
+    return this.parseChallenge(updated);
   }
 
   async delete(id: string) {
@@ -133,6 +135,14 @@ export class ChallengesService {
     return this.db.queryMany(
       'SELECT * FROM test_cases WHERE challenge_id = ? ORDER BY order_index', [challengeId],
     );
+  }
+
+  private parseChallenge(c: any) {
+    if (!c) return c;
+    if (typeof c.supported_languages === 'string') {
+      try { c.supported_languages = JSON.parse(c.supported_languages); } catch { c.supported_languages = []; }
+    }
+    return c;
   }
 
   private toSlug(title: string) {
