@@ -1,0 +1,69 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: gwt_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: codeplatform
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  code-runner:
+    build:
+      context: ./code-runner
+      dockerfile: Dockerfile
+    container_name: gwt_code_runner
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - PORT=3001
+      - MAX_CONCURRENT_EXECUTIONS=10
+      - EXECUTION_TIMEOUT_MS=10000
+    privileged: true
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: gwt_backend
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+      - DATABASE_URL=postgresql://postgres:postgres123@postgres:5432/codeplatform
+      - JWT_SECRET=change-this-in-production-min-32-chars-long
+      - JWT_EXPIRES_IN=7d
+      - CODE_RUNNER_URL=http://code-runner:3001
+      - MTN_BASE_URL=https://sandbox.momodeveloper.mtn.com
+      - MTN_SUBSCRIPTION_KEY=your-mtn-subscription-key
+      - MTN_API_USER=your-api-user-uuid
+      - MTN_API_KEY=your-api-key
+      - AIRTEL_BASE_URL=https://openapi.airtel.africa
+      - AIRTEL_CLIENT_ID=your-airtel-client-id
+      - AIRTEL_CLIENT_SECRET=your-airtel-client-secret
+      - FRONTEND_URL=http://localhost:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      code-runner:
+        condition: service_started
+
+volumes:
+  postgres_data:
