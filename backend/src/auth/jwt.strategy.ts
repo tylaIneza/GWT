@@ -15,7 +15,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
   async validate(payload: any) {
     const user = await this.db.queryOne(
-      'SELECT id, email, name, role, is_banned FROM users WHERE id = $1',
+      'SELECT id, email, name, role, is_banned FROM users WHERE id = ?',
       [payload.sub],
     );
     if (!user) throw new UnauthorizedException();

@@ -1,58 +1,79 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
-import { Pool, PoolClient, QueryResult } from 'pg';
+import * as mysql from 'mysql2/promise';
 
 @Injectable()
 export class DatabaseService implements OnModuleInit, OnModuleDestroy {
-  private pool: Pool;
+  private pool: mysql.Pool;
   private readonly logger = new Logger(DatabaseService.name);
 
   async onModuleInit() {
-    this.pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      max: 20,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000,
+    this.pool = mysql.createPool({
+      host:             process.env.DB_HOST     || 'localhost',
+      port:             parseInt(process.env.DB_PORT || '3306'),
+      user:             process.env.DB_USER     || 'root',
+      password:         process.env.DB_PASSWORD || '',
+      database:         process.env.DB_NAME     || 'codearena',
+      waitForConnections: true,
+      connectionLimit:  20,
+      timezone:         'Z',
+      dateStrings:      false,
     });
-
-    this.pool.on('error', (err) => {
-      this.logger.error('Unexpected DB error', err);
-    });
-
     await this.pool.query('SELECT 1');
-    this.logger.log('PostgreSQL connected');
+    this.logger.log('MySQL (MariaDB) connected');
   }
 
   async onModuleDestroy() {
     await this.pool.end();
   }
 
-  async query<T = any>(sql: string, params?: any[]): Promise<QueryResult<T>> {
-    return this.pool.query<T>(sql, params);
+  /** Raw query — returns [rows, fields] */
+  async query<T = any>(sql: string, params?: any[]): Promise<T[]> {
+    const [rows] = await this.pool.query<mysql.RowDataPacket[]>(sql, params);
+    return rows as unknown as T[];
   }
 
+  /** Returns first row or null */
   async queryOne<T = any>(sql: string, params?: any[]): Promise<T | null> {
-    const result = await this.pool.query<T>(sql, params);
-    return result.rows[0] || null;
+    const [rows] = await this.pool.query<mysql.RowDataPacket[]>(sql, params);
+    return (rows[0] as unknown as T) || null;
   }
 
+  /** Returns all rows */
   async queryMany<T = any>(sql: string, params?: any[]): Promise<T[]> {
-    const result = await this.pool.query<T>(sql, params);
-    return result.rows;
+    const [rows] = await this.pool.query<mysql.RowDataPacket[]>(sql, params);
+    return rows as unknown as T[];
   }
 
-  /** Run multiple queries in a single atomic transaction */
-  async transaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
-    const client = await this.pool.connect();
+  /** Execute INSERT/UPDATE/DELETE — returns OkPacket */
+  async execute(sql: string, params?: any[]): Promise<mysql.OkPacket> {
+    const [result] = await this.pool.execute(sql, params);
+    return result as mysql.OkPacket;
+  }
+
+  /** Atomic transaction */
+  async transaction<T>(fn: (client: mysql.PoolConnection) => Promise<T>): Promise<T> {
+    const conn = await this.pool.getConnection();
+    await conn.beginTransaction();
     try {
-      await client.query('BEGIN');
-      const result = await fn(client);
-      await client.query('COMMIT');
+      const result = await fn(conn);
+      await conn.commit();
       return result;
     } catch (err) {
-      await client.query('ROLLBACK');
+      await conn.rollback();
       throw err;
     } finally {
-      client.release();
+      conn.release();
     }
+  }
+
+  /** Query using a transaction connection */
+  async txQuery<T = any>(conn: mysql.PoolConnection, sql: string, params?: any[]): Promise<T[]> {
+    const [rows] = await conn.query<mysql.RowDataPacket[]>(sql, params);
+    return rows as unknown as T[];
+  }
+
+  async txQueryOne<T = any>(conn: mysql.PoolConnection, sql: string, params?: any[]): Promise<T | null> {
+    const [rows] = await conn.query<mysql.RowDataPacket[]>(sql, params);
+    return (rows[0] as unknown as T) || null;
   }
 }

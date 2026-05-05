@@ -1,174 +1,129 @@
 'use strict';
 
-const Docker = require('dockerode');
-const { v4: uuid } = require('uuid');
-const path = require('path');
-const os = require('os');
-const fs = require('fs');
+const { spawn }   = require('child_process');
+const { v4: uuid }= require('uuid');
+const path        = require('path');
+const os          = require('os');
+const fs          = require('fs');
 
-const docker = new Docker({ socketPath: '/var/run/docker.sock' });
-
-const IMAGES = {
-  javascript: 'node:20-alpine',
-  python:     'python:3.12-alpine',
-};
-
-const RUN_CMD = {
-  javascript: (file) => ['node', file],
-  python:     (file) => ['python3', file],
-};
-
-const FILE_EXT = {
-  javascript: 'js',
-  python:     'py',
+const LANG_CONFIG = {
+  javascript: { ext: 'js', cmd: 'node',    args: (f) => [f] },
+  python:     { ext: 'py', cmd: 'python3', args: (f) => [f] },
 };
 
 /**
- * Run one test case in a Docker container with resource limits.
- * Returns { passed, stdout, stderr, timeMs, error }
+ * Run one test case and return { passed, stdout, stderr, timeMs, timedOut }
  */
-async function runTestCase({ language, code, input, expected, timeLimit = 5000, memLimitMb = 256 }) {
-  const ext      = FILE_EXT[language];
-  const tmpDir   = path.join(os.tmpdir(), `gwt-${uuid()}`);
-  const codeFile = path.join(tmpDir, `solution.${ext}`);
-  const inputFile= path.join(tmpDir, 'input.txt');
+function runTestCase({ language, code, input, expected, timeLimit = 5000 }) {
+  return new Promise((resolve) => {
+    const cfg     = LANG_CONFIG[language];
+    const tmpDir  = path.join(os.tmpdir(), `codearena-${uuid()}`);
+    const codeFile= path.join(tmpDir, `solution.${cfg.ext}`);
 
-  fs.mkdirSync(tmpDir, { recursive: true });
-  fs.writeFileSync(codeFile, code, 'utf8');
-  fs.writeFileSync(inputFile, input, 'utf8');
-
-  const containerFile = `/sandbox/solution.${ext}`;
-  const containerInput= `/sandbox/input.txt`;
-
-  // Build shell command: redirect stdin from file
-  let cmd: string[];
-  if (language === 'javascript') {
-    cmd = ['sh', '-c', `node ${containerFile} < ${containerInput}`];
-  } else {
-    cmd = ['sh', '-c', `python3 ${containerFile} < ${containerInput}`];
-  }
-
-  let container: any;
-  const start = Date.now();
-
-  try {
-    container = await docker.createContainer({
-      Image:       IMAGES[language],
-      Cmd:         cmd,
-      AttachStdout: true,
-      AttachStderr: true,
-      NetworkDisabled: true,         // No network access
-      ReadonlyRootfs:  false,
-      HostConfig: {
-        Memory:            memLimitMb * 1024 * 1024,
-        MemorySwap:        memLimitMb * 1024 * 1024,
-        CpuPeriod:         100000,
-        CpuQuota:          50000,     // 50% of one CPU
-        PidsLimit:         64,        // Limit process count (prevent fork bombs)
-        NetworkMode:       'none',
-        ReadonlyRootfs:    false,
-        Binds:             [`${tmpDir}:/sandbox:ro`],
-        AutoRemove:        false,
-        CapDrop:           ['ALL'],   // Drop all Linux capabilities
-        SecurityOpt:       ['no-new-privileges'],
-      },
-    });
-
-    await container.start();
-
-    // Wait with timeout
-    const result = await Promise.race([
-      container.wait(),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('TIMEOUT')), timeLimit + 1000),
-      ),
-    ]) as any;
-
-    const timeMs = Date.now() - start;
-
-    const logs = await container.logs({
-      stdout: true, stderr: true, follow: false,
-    });
-
-    const { stdout, stderr } = parseLogs(logs);
-    const passed = stdout.trim() === expected.trim();
-
-    return { passed, stdout: stdout.trim(), stderr: stderr.trim(), timeMs, error: null };
-  } catch (err) {
-    const timeMs = Date.now() - start;
-    if (err.message === 'TIMEOUT') {
-      return { passed: false, stdout: '', stderr: '', timeMs, error: 'TLE', timedOut: true };
+    try {
+      fs.mkdirSync(tmpDir, { recursive: true });
+      fs.writeFileSync(codeFile, code, 'utf8');
+    } catch (e) {
+      return resolve({ passed: false, stdout: '', stderr: e.message, timeMs: 0, error: e.message });
     }
-    return { passed: false, stdout: '', stderr: err.message, timeMs, error: err.message };
-  } finally {
-    // Cleanup
-    try { if (container) await container.remove({ force: true }); } catch {}
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-  }
-}
 
-/** Parse Docker multiplexed log stream */
-function parseLogs(buffer: Buffer): { stdout: string; stderr: string } {
-  let stdout = '';
-  let stderr = '';
-  let offset = 0;
+    const start = Date.now();
+    const proc  = spawn(cfg.cmd, cfg.args(codeFile), {
+      cwd: tmpDir,
+      env: { PATH: process.env.PATH },   // minimal env — no secrets
+    });
 
-  while (offset < buffer.length) {
-    if (offset + 8 > buffer.length) break;
-    const streamType = buffer[offset];
-    const size       = buffer.readUInt32BE(offset + 4);
-    offset += 8;
+    let stdout = '';
+    let stderr = '';
+    let killed = false;
 
-    const chunk = buffer.slice(offset, offset + size).toString('utf8');
-    offset += size;
+    proc.stdout.on('data', (d) => {
+      stdout += d.toString();
+      if (stdout.length > 1_000_000) { proc.kill('SIGKILL'); killed = true; } // 1MB output cap
+    });
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
 
-    if (streamType === 1) stdout += chunk;
-    else if (streamType === 2) stderr += chunk;
-  }
+    // Write input and close stdin
+    if (input) {
+      proc.stdin.write(input, 'utf8');
+    }
+    proc.stdin.end();
 
-  return { stdout, stderr };
+    // Hard timeout
+    const timer = setTimeout(() => {
+      killed = true;
+      proc.kill('SIGKILL');
+    }, timeLimit);
+
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      const timeMs = Date.now() - start;
+
+      // Cleanup temp files
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+
+      if (killed && timeMs >= timeLimit - 100) {
+        return resolve({ passed: false, stdout: '', stderr: 'Time Limit Exceeded', timeMs, timedOut: true });
+      }
+
+      const out    = stdout.trim();
+      const exp    = expected.trim();
+      const passed = out === exp;
+
+      resolve({ passed, stdout: out, stderr: stderr.trim(), timeMs, timedOut: false });
+    });
+
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+      resolve({ passed: false, stdout: '', stderr: err.message, timeMs: Date.now() - start, error: err.message });
+    });
+  });
 }
 
 /**
- * Run all test cases sequentially and return aggregated results.
+ * Run all test cases sequentially.
+ * Stops early on TLE.
  */
-async function executeAll({ language, code, testCases, timeLimit = 5000, memLimit = 256 }) {
-  if (!IMAGES[language]) {
-    return { error: `Unsupported language: ${language}` };
+async function executeAll({ language, code, testCases, timeLimit = 5000 }) {
+  if (!LANG_CONFIG[language]) {
+    return { error: `Unsupported language: ${language}`, results: [] };
   }
 
-  // Pull image if not available (first run)
-  try {
-    await docker.getImage(IMAGES[language]).inspect();
-  } catch {
-    await new Promise<void>((resolve, reject) => {
-      docker.pull(IMAGES[language], (err: any, stream: any) => {
-        if (err) return reject(err);
-        docker.modem.followProgress(stream, (err: any) => err ? reject(err) : resolve());
-      });
-    });
+  // Quick syntax/compilation check
+  const firstResult = await runTestCase({
+    language, code,
+    input: testCases[0]?.input || '',
+    expected: testCases[0]?.expected || '',
+    timeLimit,
+  });
+
+  if (firstResult.error && !firstResult.timedOut) {
+    return {
+      results: testCases.map(() => ({ passed: false, stdout: '', stderr: firstResult.stderr, timeMs: 0 })),
+      timedOut: false,
+      error:    firstResult.stderr,
+      timeMs:   firstResult.timeMs,
+    };
   }
 
-  const results: any[] = [];
-  let timedOut = false;
-  let totalTimeMs = 0;
+  const results = [firstResult];
+  let timedOut  = firstResult.timedOut;
+  let totalTime = firstResult.timeMs;
 
-  for (const tc of testCases) {
+  for (let i = 1; i < testCases.length && !timedOut; i++) {
     const r = await runTestCase({
-      language, code, input: tc.input, expected: tc.expected,
-      timeLimit, memLimitMb: memLimit,
+      language, code,
+      input:    testCases[i].input,
+      expected: testCases[i].expected,
+      timeLimit,
     });
     results.push(r);
-    totalTimeMs += r.timeMs;
-    if (r.timedOut) { timedOut = true; break; }
+    totalTime += r.timeMs;
+    if (r.timedOut) timedOut = true;
   }
 
-  return {
-    results,
-    timedOut,
-    timeMs:   totalTimeMs,
-    memoryMb: 0, // approximated
-  };
+  return { results, timedOut, timeMs: totalTime, memoryMb: 0 };
 }
 
 module.exports = { executeAll };
