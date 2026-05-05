@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import api from '@/lib/api';
 import { getToken, isAdmin } from '@/lib/auth';
-import { Users, Trophy, AlertTriangle, TrendingUp, ShieldAlert, Wallet, ArrowDownToLine, TrendingDown } from 'lucide-react';
+import { Users, Trophy, AlertTriangle, TrendingUp, ShieldAlert, Wallet, ArrowDownToLine, RefreshCw } from 'lucide-react';
 
 type Tab = 'dashboard'|'users'|'submissions'|'flags'|'contests'|'finance';
 
@@ -18,8 +18,8 @@ export default function AdminPage() {
   const [contests,setContests]= useState<any[]>([]);
   const [loading,     setLoading]    = useState(true);
   const [authorized,  setAuthorized] = useState(false);
+  const [loadError,   setLoadError]  = useState('');
   const [msg,         setMsg]        = useState('');
-  const [search,      setSearch]     = useState('');
   const [wallet,      setWallet]     = useState<any>(null);
   const [depositAmt,  setDepositAmt] = useState('');
   const [depositNote, setDepositNote]= useState('');
@@ -33,14 +33,17 @@ export default function AdminPage() {
 
   const load = async (t: Tab) => {
     setLoading(true);
+    setLoadError('');
     try {
-      if (t === 'dashboard') { const r = await api.get('/admin/dashboard'); setData(r.data); }
-      else if (t === 'users') { const r = await api.get('/admin/users'); setUsers(r.data || []); }
+      if (t === 'dashboard')   { const r = await api.get('/admin/dashboard');             setData(r.data);         }
+      else if (t === 'users')  { const r = await api.get('/admin/users');                 setUsers(r.data || []);  }
       else if (t === 'submissions') { const r = await api.get('/admin/submissions?suspicious=true'); setSubs(r.data || []); }
-      else if (t === 'flags') { const r = await api.get('/anti-cheat/flags'); setFlags(r.data || []); }
-      else if (t === 'contests') { const r = await api.get('/contests'); setContests(r.data || []); }
-      else if (t === 'finance') { const r = await api.get('/admin/wallet'); setWallet(r.data); }
-    } catch {}
+      else if (t === 'flags')  { const r = await api.get('/anti-cheat/flags');            setFlags(r.data || []);  }
+      else if (t === 'contests') { const r = await api.get('/contests');                  setContests(r.data || []); }
+      else if (t === 'finance') { const r = await api.get('/admin/wallet');               setWallet(r.data);       }
+    } catch (e: any) {
+      setLoadError(e?.response?.data?.message || e?.message || 'Failed to load data — check your connection');
+    }
     setLoading(false);
   };
 
@@ -98,7 +101,15 @@ export default function AdminPage() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-6">
         <h1 className="text-2xl font-black text-white">Admin Panel</h1>
 
-        {msg && <div className="bg-green-900/30 border border-green-700 text-green-300 rounded-xl px-4 py-3 text-sm">{msg}</div>}
+        {msg      && <div className="bg-green-900/30 border border-green-700 text-green-300 rounded-xl px-4 py-3 text-sm">{msg}</div>}
+        {loadError && (
+          <div className="bg-red-900/30 border border-red-700 text-red-300 rounded-xl px-4 py-3 text-sm flex items-center justify-between">
+            <span>{loadError}</span>
+            <button onClick={() => load(tab)} className="flex items-center gap-1.5 text-xs text-red-400 hover:text-red-200 font-medium ml-4 shrink-0">
+              <RefreshCw className="w-3.5 h-3.5" /> Retry
+            </button>
+          </div>
+        )}
 
         {/* Tabs */}
         <div className="flex gap-1 bg-gray-900 border border-gray-800 rounded-xl p-1 flex-wrap">
@@ -113,8 +124,21 @@ export default function AdminPage() {
         {loading && <div className="card p-12 text-center text-gray-500 animate-pulse">Loading...</div>}
 
         {/* Dashboard */}
+        {!loading && tab === 'dashboard' && !loadError && !data && (
+          <div className="card p-10 text-center text-gray-500">
+            No data loaded.{' '}
+            <button onClick={() => load('dashboard')} className="text-green-400 hover:text-green-300 font-medium">Retry</button>
+          </div>
+        )}
+
         {!loading && tab === 'dashboard' && data && (
           <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-gray-600">Live stats</span>
+              <button onClick={() => load('dashboard')} className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300">
+                <RefreshCw className="w-3 h-3" /> Refresh
+              </button>
+            </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
               {[
                 { label: 'Total Users',    value: data.users?.total    || 0, color: 'text-blue-400'   },
