@@ -42,4 +42,12 @@ export class AdminController {
   adjustBalance(@Param('id') id: string, @Body() body: any) {
     return this.svc.adjustBalance(id, body.amount, body.reason);
   }
+
+  @Get('wallet')
+  getWallet() { return this.svc.getAdminWallet(); }
+
+  @Post('wallet/deposit')
+  depositToWallet(@Body() body: { amount: number; note?: string }) {
+    return this.svc.adminDeposit(body.amount, body.note || 'Manual top-up');
+  }
 }

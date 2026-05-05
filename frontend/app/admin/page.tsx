@@ -4,9 +4,9 @@ import { useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import api from '@/lib/api';
 import { getToken, isAdmin } from '@/lib/auth';
-import { Users, Code2, Trophy, AlertTriangle, TrendingUp, ShieldAlert } from 'lucide-react';
+import { Users, Trophy, AlertTriangle, TrendingUp, ShieldAlert, Wallet, ArrowDownToLine, TrendingDown } from 'lucide-react';
 
-type Tab = 'dashboard'|'users'|'submissions'|'flags'|'contests';
+type Tab = 'dashboard'|'users'|'submissions'|'flags'|'contests'|'finance';
 
 export default function AdminPage() {
   const router = useRouter();
@@ -16,10 +16,14 @@ export default function AdminPage() {
   const [subs,    setSubs]    = useState<any[]>([]);
   const [flags,   setFlags]   = useState<any[]>([]);
   const [contests,setContests]= useState<any[]>([]);
-  const [loading,    setLoading]    = useState(true);
-  const [authorized, setAuthorized] = useState(false);
-  const [msg,        setMsg]        = useState('');
-  const [search,     setSearch]     = useState('');
+  const [loading,     setLoading]    = useState(true);
+  const [authorized,  setAuthorized] = useState(false);
+  const [msg,         setMsg]        = useState('');
+  const [search,      setSearch]     = useState('');
+  const [wallet,      setWallet]     = useState<any>(null);
+  const [depositAmt,  setDepositAmt] = useState('');
+  const [depositNote, setDepositNote]= useState('');
+  const [depositing,  setDepositing] = useState(false);
 
   useEffect(() => {
     if (!getToken() || !isAdmin()) { router.push('/auth/login'); return; }
@@ -35,12 +39,26 @@ export default function AdminPage() {
       else if (t === 'submissions') { const r = await api.get('/admin/submissions?suspicious=true'); setSubs(r.data || []); }
       else if (t === 'flags') { const r = await api.get('/anti-cheat/flags'); setFlags(r.data || []); }
       else if (t === 'contests') { const r = await api.get('/contests'); setContests(r.data || []); }
+      else if (t === 'finance') { const r = await api.get('/admin/wallet'); setWallet(r.data); }
     } catch {}
     setLoading(false);
   };
 
   const switchTab = (t: Tab) => { setTab(t); load(t); };
-  const notify    = (m: string) => { setMsg(m); setTimeout(() => setMsg(''), 3000); };
+  const notify    = (m: string) => { setMsg(m); setTimeout(() => setMsg(''), 4000); };
+
+  const doDeposit = async () => {
+    const amount = Number(depositAmt);
+    if (!amount || amount < 1) return;
+    setDepositing(true);
+    try {
+      await api.post('/admin/wallet/deposit', { amount, note: depositNote || 'Manual top-up' });
+      notify(`${amount.toLocaleString()} RWF deposited to platform wallet`);
+      setDepositAmt(''); setDepositNote('');
+      const r = await api.get('/admin/wallet'); setWallet(r.data);
+    } catch (e: any) { notify(e.response?.data?.message || 'Deposit failed'); }
+    finally { setDepositing(false); }
+  };
 
   const banUser = async (id: string, ban: boolean) => {
     try {
@@ -64,11 +82,12 @@ export default function AdminPage() {
   };
 
   const tabs: { key: Tab; label: string; icon: any }[] = [
-    { key: 'dashboard',    label: 'Dashboard',    icon: TrendingUp  },
-    { key: 'users',        label: 'Users',        icon: Users       },
-    { key: 'submissions',  label: 'Suspicious',   icon: ShieldAlert },
-    { key: 'flags',        label: 'Cheat Flags',  icon: AlertTriangle},
-    { key: 'contests',     label: 'Contests',     icon: Trophy      },
+    { key: 'dashboard',   label: 'Dashboard',   icon: TrendingUp   },
+    { key: 'users',       label: 'Users',        icon: Users        },
+    { key: 'submissions', label: 'Suspicious',   icon: ShieldAlert  },
+    { key: 'flags',       label: 'Cheat Flags',  icon: AlertTriangle},
+    { key: 'contests',    label: 'Contests',     icon: Trophy       },
+    { key: 'finance',     label: 'Finance',      icon: Wallet       },
   ];
 
   if (!authorized) return <div className="min-h-screen bg-gray-950" />;
@@ -228,6 +247,114 @@ export default function AdminPage() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Finance */}
+        {!loading && tab === 'finance' && (
+          <div className="space-y-6">
+
+            {/* Wallet balance + deposit */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Balance card */}
+              <div className="card p-6 space-y-4">
+                <div className="flex items-center gap-2">
+                  <Wallet className="w-5 h-5 text-green-400" />
+                  <h2 className="font-bold text-white">Platform Wallet</h2>
+                </div>
+                <p className="text-4xl font-black text-green-400">
+                  {wallet ? Number(wallet.balance).toLocaleString() : '—'} <span className="text-xl text-green-600">RWF</span>
+                </p>
+                <div className="grid grid-cols-2 gap-3 pt-2">
+                  {[
+                    { label: 'Total Bets',      value: wallet?.stats?.total_bets      || 0,     color: 'text-blue-400'   },
+                    { label: 'Active Bets',     value: wallet?.stats?.active_bets     || 0,     color: 'text-yellow-400' },
+                    { label: 'Total Collected', value: `${Number(wallet?.stats?.total_collected || 0).toLocaleString()} RWF`, color: 'text-green-400'  },
+                    { label: 'Total Paid Out',  value: `${Number(wallet?.stats?.total_paid_out  || 0).toLocaleString()} RWF`, color: 'text-red-400'    },
+                  ].map(s => (
+                    <div key={s.label} className="bg-gray-800/60 rounded-xl p-3">
+                      <p className="text-xs text-gray-500 mb-1">{s.label}</p>
+                      <p className={`font-bold text-sm ${s.color}`}>{s.value}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Deposit form */}
+              <div className="card p-6 space-y-4">
+                <div className="flex items-center gap-2">
+                  <ArrowDownToLine className="w-5 h-5 text-amber-400" />
+                  <h2 className="font-bold text-white">Deposit to Platform</h2>
+                </div>
+                <p className="text-sm text-gray-500">Add real cash to the platform pool so it can pay out winning bets.</p>
+                <div className="space-y-3">
+                  <div>
+                    <label className="label">Amount (RWF)</label>
+                    <input type="number" min="1000" placeholder="e.g. 100000"
+                      value={depositAmt} onChange={e => setDepositAmt(e.target.value)}
+                      className="input" />
+                  </div>
+                  <div>
+                    <label className="label">Note (optional)</label>
+                    <input type="text" placeholder="e.g. Monthly top-up"
+                      value={depositNote} onChange={e => setDepositNote(e.target.value)}
+                      className="input" />
+                  </div>
+                  {/* Quick amounts */}
+                  <div className="flex gap-2 flex-wrap">
+                    {[10000, 50000, 100000, 500000].map(v => (
+                      <button key={v} onClick={() => setDepositAmt(String(v))}
+                        className="text-xs px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 font-medium transition-colors">
+                        {(v / 1000)}K
+                      </button>
+                    ))}
+                  </div>
+                  <button onClick={doDeposit} disabled={depositing || !depositAmt}
+                    className="btn-primary w-full justify-center py-3">
+                    {depositing ? 'Processing...' : 'Deposit to Platform Wallet'}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Recent bet activity */}
+            {wallet?.recent?.length > 0 && (
+              <div className="card overflow-hidden">
+                <div className="px-4 py-3 border-b border-gray-800">
+                  <h2 className="font-semibold text-white text-sm">Recent Bet Activity</h2>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="border-b border-gray-800">
+                      <tr>{['User','Challenge','Bet','Multiplier','Payout','Status','Date'].map(h => (
+                        <th key={h} className="text-left px-4 py-2 text-xs text-gray-500 font-semibold uppercase">{h}</th>
+                      ))}</tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-800">
+                      {wallet.recent.map((b: any, i: number) => (
+                        <tr key={i}>
+                          <td className="px-4 py-2.5 font-medium text-white">{b.user_name}</td>
+                          <td className="px-4 py-2.5 text-gray-400 text-xs">{b.challenge_title}</td>
+                          <td className="px-4 py-2.5 text-yellow-400 font-medium">{Number(b.amount).toLocaleString()}</td>
+                          <td className="px-4 py-2.5 text-gray-400">{b.multiplier}×</td>
+                          <td className="px-4 py-2.5 text-green-400 font-medium">{Number(b.potential_payout).toLocaleString()}</td>
+                          <td className="px-4 py-2.5">
+                            <span className={`badge text-xs ${b.status === 'won' ? 'badge-green' : b.status === 'lost' ? 'badge-red' : 'badge-yellow'}`}>
+                              {b.status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2.5 text-gray-500 text-xs">{new Date(b.created_at).toLocaleDateString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {wallet?.recent?.length === 0 && (
+              <div className="card p-10 text-center text-gray-500">No bets placed yet</div>
+            )}
           </div>
         )}
 

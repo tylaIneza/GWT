@@ -2,6 +2,7 @@ import { Injectable }        from '@nestjs/common';
 import { DatabaseService }   from '../database/database.service';
 import { WalletService }     from '../wallet/wallet.service';
 import { ContestsService }   from '../contests/contests.service';
+import { BetsService }       from '../bets/bets.service';
 
 @Injectable()
 export class AdminService {
@@ -9,6 +10,7 @@ export class AdminService {
     private db:       DatabaseService,
     private wallet:   WalletService,
     private contests: ContestsService,
+    private bets:     BetsService,
   ) {}
 
   async getDashboard() {
@@ -82,6 +84,14 @@ export class AdminService {
     await this.contests.updateStatus(contestId);
     await this.wallet.distributePrizes(contestId);
     return { success: true };
+  }
+
+  async getAdminWallet() {
+    return this.bets.adminWalletInfo();
+  }
+
+  async adminDeposit(amount: number, note: string) {
+    return this.bets.adminDeposit(amount, note);
   }
 
   async adjustBalance(userId: string, amount: number, reason: string) {

@@ -9,6 +9,7 @@ import { DatabaseService }    from '../database/database.service';
 import { ChallengesService }  from '../challenges/challenges.service';
 import { AntiCheatService }   from '../anti-cheat/anti-cheat.service';
 import { SubmitDto }          from './dto/submit.dto';
+import { BetsService }        from '../bets/bets.service';
 
 @Injectable()
 export class SubmissionsService {
@@ -20,6 +21,7 @@ export class SubmissionsService {
     private challenges: ChallengesService,
     private antiCheat:  AntiCheatService,
     private http:       HttpService,
+    private bets:       BetsService,
   ) {}
 
   async submit(dto: SubmitDto, userId: string, ip: string, userAgent: string) {
@@ -142,6 +144,11 @@ export class SubmissionsService {
       await this.updateLeaderboard(dto.contest_id, userId, score, execResult.timeMs || 0);
     }
 
+    // Resolve any open bet for this challenge
+    const betResult = await this.bets.resolveBet(
+      userId, dto.challenge_id, subId, status === 'accepted',
+    ).catch(() => null);
+
     const sampleResults = (execResult.results || []).map((r: any, i: number) => ({
       test_case:  i + 1,
       passed:     r.passed,
@@ -151,7 +158,7 @@ export class SubmissionsService {
       time_ms:    r.timeMs,
     }));
 
-    return { id: subId, status, score, passed, total, results: sampleResults, risk_score: riskScore, time_ms: execResult.timeMs };
+    return { id: subId, status, score, passed, total, results: sampleResults, risk_score: riskScore, time_ms: execResult.timeMs, bet: betResult };
   }
 
   async findByUser(userId: string, challengeId?: string) {
