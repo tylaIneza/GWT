@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Navbar from '@/components/Navbar';
 import api from '@/lib/api';
-import { getToken, getUser } from '@/lib/auth';
+import { getToken, getUser, isAdmin } from '@/lib/auth';
 import { Code2, Trophy, Wallet, TrendingUp, CheckCircle, Clock } from 'lucide-react';
 
 export default function Dashboard() {
@@ -14,7 +14,10 @@ export default function Dashboard() {
   const [contests, setContests] = useState<any[]>([]);
   const [recent,   setRecent]   = useState<any[]>([]);
 
-  useEffect(() => { if (!getToken()) router.push('/auth/login'); }, []);
+  useEffect(() => {
+    if (!getToken()) { router.push('/auth/login'); return; }
+    if (isAdmin())   { router.push('/admin');      return; }
+  }, []);
 
   useEffect(() => {
     Promise.all([
@@ -27,10 +30,6 @@ export default function Dashboard() {
       setRecent((s.data || []).slice(0, 5));
     }).catch(() => {});
   }, []);
-
-  const DIFF_CLASS: Record<string, string> = {
-    easy: 'diff-easy', medium: 'diff-medium', hard: 'diff-hard',
-  };
 
   return (
     <div className="min-h-screen bg-gray-950">

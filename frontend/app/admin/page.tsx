@@ -16,12 +16,14 @@ export default function AdminPage() {
   const [subs,    setSubs]    = useState<any[]>([]);
   const [flags,   setFlags]   = useState<any[]>([]);
   const [contests,setContests]= useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [msg,     setMsg]     = useState('');
-  const [search,  setSearch]  = useState('');
+  const [loading,    setLoading]    = useState(true);
+  const [authorized, setAuthorized] = useState(false);
+  const [msg,        setMsg]        = useState('');
+  const [search,     setSearch]     = useState('');
 
   useEffect(() => {
     if (!getToken() || !isAdmin()) { router.push('/auth/login'); return; }
+    setAuthorized(true);
     load('dashboard');
   }, []);
 
@@ -68,6 +70,8 @@ export default function AdminPage() {
     { key: 'flags',        label: 'Cheat Flags',  icon: AlertTriangle},
     { key: 'contests',     label: 'Contests',     icon: Trophy      },
   ];
+
+  if (!authorized) return <div className="min-h-screen bg-gray-950" />;
 
   return (
     <div className="min-h-screen bg-gray-950">

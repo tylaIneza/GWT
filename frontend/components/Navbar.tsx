@@ -1,15 +1,18 @@
 'use client';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
-import { getUser, clearAuth, isAdmin } from '@/lib/auth';
+import { getUser, clearAuth } from '@/lib/auth';
 import { Code2, Trophy, LayoutDashboard, Wallet, LogOut, Settings, Users } from 'lucide-react';
 
 export default function Navbar() {
   const router  = useRouter();
   const path    = usePathname();
-  const user    = getUser();
+  const [user, setUser] = useState<any>(null);
 
-  const logout = () => { clearAuth(); router.push('/'); };
+  useEffect(() => { setUser(getUser()); }, []);
+
+  const logout = () => { clearAuth(); setUser(null); router.push('/'); };
 
   const links = [
     { href: '/dashboard',  label: 'Dashboard',  icon: LayoutDashboard },
@@ -17,7 +20,7 @@ export default function Navbar() {
     { href: '/contests',   label: 'Contests',   icon: Trophy          },
     { href: '/leaderboard',label: 'Leaderboard',icon: Users           },
     { href: '/wallet',     label: 'Wallet',     icon: Wallet          },
-    ...(isAdmin() ? [{ href: '/admin', label: 'Admin', icon: Settings }] : []),
+    ...(user?.role === 'admin' ? [{ href: '/admin', label: 'Admin', icon: Settings }] : []),
   ];
 
   return (
