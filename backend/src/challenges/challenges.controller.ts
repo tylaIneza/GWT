@@ -11,8 +11,8 @@ export class ChallengesController {
   constructor(private svc: ChallengesService) {}
 
   @Get()
-  findAll(@Query() query: any) {
-    return this.svc.findAll(query);
+  findAll(@Query() query: any, @Req() req: any) {
+    return this.svc.findAll(query, req.user?.id);
   }
 
   @Get(':slugOrId')

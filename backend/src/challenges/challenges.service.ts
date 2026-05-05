@@ -7,23 +7,33 @@ import { CreateChallengeDto }   from './dto/create-challenge.dto';
 export class ChallengesService {
   constructor(private db: DatabaseService) {}
 
-  async findAll(query: any) {
+  async findAll(query: any, userId?: string) {
     const { difficulty, category, search, page = 1, limit = 20 } = query;
     const offset = (Number(page) - 1) * Number(limit);
     const where: string[] = ['c.is_published = 1'];
-    const params: any[]   = [];
+    const filterParams: any[] = [];
 
-    if (difficulty) { params.push(difficulty);      where.push('c.difficulty = ?'); }
-    if (category)   { params.push(category);        where.push('c.category = ?'); }
-    if (search)     { params.push(`%${search}%`);   where.push('c.title LIKE ?'); }
+    if (difficulty) { filterParams.push(difficulty);    where.push('c.difficulty = ?'); }
+    if (category)   { filterParams.push(category);      where.push('c.category = ?'); }
+    if (search)     { filterParams.push(`%${search}%`); where.push('c.title LIKE ?'); }
 
-    params.push(Number(limit), offset);
+    // Subquery params come first (they appear in SELECT before WHERE)
+    const subqueryParams = userId ? [userId, userId] : [];
+    const params = [...subqueryParams, ...filterParams, Number(limit), offset];
+
+    const userSubqueries = userId
+      ? `, (SELECT MAX(CASE WHEN su.status='accepted' THEN 1 ELSE 0 END)
+             FROM submissions su WHERE su.user_id=? AND su.challenge_id=c.id) AS user_solved,
+           (SELECT COUNT(*)
+             FROM submissions su WHERE su.user_id=? AND su.challenge_id=c.id) AS user_attempts`
+      : `, 0 AS user_solved, 0 AS user_attempts`;
 
     const challenges = await this.db.queryMany(
       `SELECT c.id, c.title, c.slug, c.difficulty, c.category, c.supported_languages,
               c.time_limit_ms, c.memory_limit_mb, c.max_submissions, c.created_at,
               COUNT(CASE WHEN s.status = 'accepted' THEN 1 END) AS accepted_count,
               COUNT(s.id) AS total_submissions
+              ${userSubqueries}
        FROM challenges c
        LEFT JOIN submissions s ON s.challenge_id = c.id
        WHERE ${where.join(' AND ')}

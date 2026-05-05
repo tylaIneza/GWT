@@ -38,6 +38,15 @@ export class SubmissionsService {
       throw new BadRequestException(`Language ${dto.language} not supported`);
     }
 
+    // Block re-solving in practice mode — contest re-submissions are allowed
+    if (!dto.contest_id) {
+      const already = await this.db.queryOne(
+        `SELECT id FROM submissions WHERE user_id = ? AND challenge_id = ? AND status = 'accepted' LIMIT 1`,
+        [userId, dto.challenge_id],
+      );
+      if (already) throw new BadRequestException('already_solved');
+    }
+
     // Submission limit (per hour)
     const recent = await this.db.queryOne<{ cnt: number }>(
       `SELECT COUNT(*) AS cnt FROM submissions
