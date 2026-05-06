@@ -5,16 +5,18 @@ import Link from 'next/link';
 import Navbar from '@/components/Navbar';
 import api from '@/lib/api';
 import { getToken } from '@/lib/auth';
-import { Search, CheckCircle, RotateCcw } from 'lucide-react';
+import { Search, CheckCircle, RotateCcw, Shuffle, Timer } from 'lucide-react';
 
 const DIFF: Record<string, string> = { easy: 'diff-easy', medium: 'diff-medium', hard: 'diff-hard' };
 
 export default function ChallengesPage() {
   const router = useRouter();
-  const [challenges, setChallenges] = useState<any[]>([]);
-  const [loading,    setLoading]    = useState(true);
-  const [search,     setSearch]     = useState('');
-  const [difficulty, setDifficulty] = useState('');
+  const [challenges,    setChallenges]    = useState<any[]>([]);
+  const [loading,       setLoading]       = useState(true);
+  const [search,        setSearch]        = useState('');
+  const [difficulty,    setDifficulty]    = useState('');
+  const [randomLoading, setRandomLoading] = useState(false);
+  const [randomError,   setRandomError]   = useState('');
 
   useEffect(() => { if (!getToken()) router.push('/auth/login'); }, []);
 
@@ -29,6 +31,22 @@ export default function ChallengesPage() {
       .finally(() => setLoading(false));
   }, [search, difficulty]);
 
+  const handleRandom = async () => {
+    setRandomLoading(true); setRandomError('');
+    try {
+      const res = await api.get('/challenges/random');
+      if (res.data.id) {
+        router.push(`/challenges/${res.data.id}`);
+      } else {
+        setRandomError(res.data.message || 'No challenges available');
+        setRandomLoading(false);
+      }
+    } catch {
+      setRandomError('Could not get a random challenge');
+      setRandomLoading(false);
+    }
+  };
+
   const solvedCount   = challenges.filter(c => Number(c.user_solved) === 1).length;
   const attemptedCount = challenges.filter(c => Number(c.user_solved) !== 1 && Number(c.user_attempts) > 0).length;
 
@@ -36,18 +54,39 @@ export default function ChallengesPage() {
     <div className="min-h-screen bg-gray-950">
       <Navbar />
       <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-6">
-        <div className="flex items-end justify-between">
+
+        {/* Header */}
+        <div className="flex items-end justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-white">Challenges</h1>
-            <p className="text-gray-500 text-sm mt-1">Solve problems · Build skills · Win contests</p>
+            <p className="text-gray-500 text-sm mt-1 flex items-center gap-1.5">
+              <Timer className="w-3.5 h-3.5 text-orange-400" />
+              5-minute timer · Bet to earn multiplied rewards
+            </p>
           </div>
           {challenges.length > 0 && (
-            <div className="flex items-center gap-4 text-sm">
+            <div className="flex items-center gap-4 text-sm shrink-0">
               <span className="text-green-400 font-semibold">{solvedCount} solved</span>
               {attemptedCount > 0 && <span className="text-yellow-500">{attemptedCount} attempted</span>}
               <span className="text-gray-600">{challenges.length} total</span>
             </div>
           )}
+        </div>
+
+        {/* Surprise Me button */}
+        <div className="card p-4 flex flex-col sm:flex-row items-center gap-4">
+          <div className="flex-1">
+            <p className="text-white font-semibold">Feeling lucky?</p>
+            <p className="text-gray-500 text-sm mt-0.5">Get a unique challenge no one else is currently solving. Timer starts immediately.</p>
+          </div>
+          <div className="flex flex-col items-center gap-1 shrink-0">
+            <button onClick={handleRandom} disabled={randomLoading}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-700 to-pink-700 hover:from-purple-600 hover:to-pink-600 text-white font-bold text-sm transition-all disabled:opacity-50">
+              <Shuffle className="w-4 h-4" />
+              {randomLoading ? 'Finding challenge...' : 'Surprise Me!'}
+            </button>
+            {randomError && <p className="text-red-400 text-xs text-center">{randomError}</p>}
+          </div>
         </div>
 
         {/* Filters */}
@@ -88,9 +127,8 @@ export default function ChallengesPage() {
               const attempted = !solved && Number(c.user_attempts) > 0;
               return (
                 <Link key={c.id} href={`/challenges/${c.id}`}
-                  className={`flex items-center gap-4 px-5 py-4 hover:bg-gray-800/30 transition-colors group ${solved ? 'opacity-75' : ''}`}>
+                  className={`flex items-center gap-4 px-5 py-4 hover:bg-gray-800/30 transition-colors group ${solved ? 'opacity-70' : ''}`}>
 
-                  {/* Status icon */}
                   <div className="w-6 shrink-0 flex items-center justify-center">
                     {solved ? (
                       <CheckCircle className="w-4 h-4 text-green-500" />
@@ -115,9 +153,7 @@ export default function ChallengesPage() {
                   </div>
 
                   <div className="flex items-center gap-3 shrink-0">
-                    {solved && (
-                      <span className="text-xs text-green-500 font-semibold hidden sm:block">Solved</span>
-                    )}
+                    {solved && <span className="text-xs text-green-500 font-semibold hidden sm:block">Solved</span>}
                     <span className={`badge text-xs capitalize ${DIFF[c.difficulty] || 'badge'}`}>{c.difficulty}</span>
                     <div className="text-right hidden sm:block">
                       <p className="text-xs text-gray-500">{c.supported_languages?.join(' · ')}</p>

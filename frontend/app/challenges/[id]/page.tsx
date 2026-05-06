@@ -8,7 +8,7 @@ import { getToken } from '@/lib/auth';
 import {
   Play, RotateCcw, Clock, CheckCircle, XCircle,
   AlertTriangle, Coins, TrendingUp, TrendingDown,
-  ChevronLeft, ChevronRight, Trophy,
+  ChevronLeft, ChevronRight, Trophy, Timer,
 } from 'lucide-react';
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
@@ -20,12 +20,10 @@ const TEMPLATES: Record<string, string> = {
 
 const DIFF_BADGE: Record<string, string>      = { easy: 'badge-green', medium: 'badge-yellow', hard: 'badge-red' };
 const DIFF_MULTIPLIER: Record<string, number> = { easy: 2,             medium: 3,              hard: 5          };
-const DIFF_LABEL: Record<string, string>      = { easy: 'Easy',        medium: 'Medium',       hard: 'Hard'     };
-
 const DIFF_GLOW: Record<string, string> = {
-  easy:   'border-green-700/60  shadow-green-900/40',
-  medium: 'border-yellow-700/60 shadow-yellow-900/40',
-  hard:   'border-red-700/60    shadow-red-900/40',
+  easy:   'border-green-700/60',
+  medium: 'border-yellow-700/60',
+  hard:   'border-red-700/60',
 };
 const DIFF_ACCENT: Record<string, string> = {
   easy:   'text-green-400',
@@ -33,14 +31,20 @@ const DIFF_ACCENT: Record<string, string> = {
   hard:   'text-red-400',
 };
 const DIFF_BTN: Record<string, string> = {
-  easy:   'bg-green-700  hover:bg-green-600',
+  easy:   'bg-green-700 hover:bg-green-600',
   medium: 'bg-yellow-700 hover:bg-yellow-600',
-  hard:   'bg-red-700    hover:bg-red-600',
+  hard:   'bg-red-700 hover:bg-red-600',
 };
 
 interface TypingStats {
   keystrokes: number; paste_count: number;
   time_to_first_char: number; total_time_ms: number; start_time: number | null;
+}
+
+function formatTime(s: number) {
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
 }
 
 export default function ChallengePage() {
@@ -60,25 +64,33 @@ export default function ChallengePage() {
   const [challengeList, setChallengeList] = useState<{ id: string; title: string; user_solved: number }[]>([]);
 
   // Bet modal state
-  const [showModal,   setShowModal]   = useState(false);
-  const [betReady,    setBetReady]    = useState(false);
-  const [betAmount,   setBetAmount]   = useState('');
-  const [activeBet,   setActiveBet]   = useState<any>(null);
-  const [betLoading,  setBetLoading]  = useState(false);
-  const [betError,    setBetError]    = useState('');
+  const [showModal,  setShowModal]  = useState(false);
+  const [betReady,   setBetReady]   = useState(false);
+  const [betAmount,  setBetAmount]  = useState('');
+  const [activeBet,  setActiveBet]  = useState<any>(null);
+  const [betLoading, setBetLoading] = useState(false);
+  const [betError,   setBetError]   = useState('');
+
+  // Timer state
+  const [expiresAt, setExpiresAt] = useState<string | null>(null);
+  const [timeLeft,  setTimeLeft]  = useState<number | null>(null);
+  const [timedOut,  setTimedOut]  = useState(false);
+  const timedOutRef = useRef(false);
 
   const stats        = useRef<TypingStats>({ keystrokes: 0, paste_count: 0, time_to_first_char: 0, total_time_ms: 0, start_time: null });
   const sessionStart = useRef(Date.now());
 
   useEffect(() => { if (!getToken()) router.push('/auth/login'); }, []);
 
+  // ── Load challenge + bet + session + list ─────────────────────
   useEffect(() => {
     if (!id) return;
     Promise.all([
       api.get(`/challenges/${id}`),
       api.get(`/bets/active?challenge_id=${id}`),
+      api.get(`/challenges/${id}/session`).catch(() => ({ data: null })),
       api.get('/challenges?limit=100'),
-    ]).then(([challengeRes, betRes, listRes]) => {
+    ]).then(([challengeRes, betRes, sessionRes, listRes]) => {
       const ch = challengeRes.data;
       setChallenge(ch);
       setChallengeList(listRes.data.challenges || []);
@@ -88,14 +100,49 @@ export default function ChallengePage() {
 
       if (solved) {
         setBetReady(true);
-      } else if (betRes.data) {
-        setActiveBet(betRes.data);
-        setBetReady(true);
-      } else {
-        setShowModal(true);
+        return;
       }
+
+      // Restore existing active session
+      const session = sessionRes.data;
+      if (session && session.status === 'active') {
+        const expTime = new Date(session.expires_at);
+        if (expTime > new Date()) {
+          setExpiresAt(session.expires_at);
+          if (betRes.data) setActiveBet(betRes.data);
+          setBetReady(true);
+          return;
+        }
+        // Session expired while away
+        setTimedOut(true);
+        timedOutRef.current = true;
+        setBetReady(true);
+        return;
+      }
+
+      if (betRes.data) {
+        setActiveBet(betRes.data);
+      }
+      setShowModal(true);
     }).catch(() => router.push('/challenges'));
   }, [id]);
+
+  // ── Countdown timer ───────────────────────────────────────────
+  useEffect(() => {
+    if (!expiresAt || timedOut) return;
+    const tick = () => {
+      const remaining = Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000));
+      setTimeLeft(remaining);
+      if (remaining === 0 && !timedOutRef.current) {
+        timedOutRef.current = true;
+        setTimedOut(true);
+        api.post(`/challenges/${id}/forfeit`).catch(() => {});
+      }
+    };
+    tick();
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }, [expiresAt]);
 
   useEffect(() => {
     const fp   = [navigator.userAgent, screen.width + 'x' + screen.height, Intl.DateTimeFormat().resolvedOptions().timeZone, navigator.language].join('|');
@@ -103,8 +150,8 @@ export default function ChallengePage() {
     api.post('/anti-cheat/fingerprint', { fingerprint: hash }).catch(() => {});
   }, []);
 
-  // Navigation helpers
-  const currentIndex = challengeList.findIndex(c => c.id === id);
+  // ── Navigation helpers ────────────────────────────────────────
+  const currentIndex  = challengeList.findIndex(c => c.id === id);
   const prevChallenge = currentIndex > 0 ? challengeList[currentIndex - 1] : null;
   const nextChallenge = currentIndex >= 0 && currentIndex < challengeList.length - 1 ? challengeList[currentIndex + 1] : null;
   const nextUnsolved  = challengeList.find(c => c.id !== id && Number(c.user_solved) !== 1) || nextChallenge;
@@ -136,6 +183,15 @@ export default function ChallengePage() {
     });
   };
 
+  // ── Start session (called after bet decision) ─────────────────
+  const startSession = async () => {
+    try {
+      const res = await api.post(`/challenges/${id}/start`);
+      setExpiresAt(res.data.expires_at);
+    } catch {}
+  };
+
+  // ── Bet modal actions ─────────────────────────────────────────
   const confirmBet = async () => {
     const amount = Number(betAmount);
     if (!amount || amount < 100) { setBetError('Minimum bet is 100 RWF'); return; }
@@ -145,18 +201,21 @@ export default function ChallengePage() {
       setActiveBet(res.data);
       setShowModal(false);
       setBetReady(true);
+      await startSession();
     } catch (e: any) {
       setBetError(e.response?.data?.message || 'Failed to place bet');
     } finally { setBetLoading(false); }
   };
 
-  const skipBet = () => {
+  const skipBet = async () => {
     setShowModal(false);
     setBetReady(true);
+    await startSession();
   };
 
+  // ── Submit ────────────────────────────────────────────────────
   const submit = async () => {
-    if (!challenge || submitting || alreadySolved) return;
+    if (!challenge || submitting || alreadySolved || timedOut) return;
     setSubmitting(true); setResult(null);
     stats.current.total_time_ms = Date.now() - sessionStart.current;
     try {
@@ -173,7 +232,6 @@ export default function ChallengePage() {
       if (res.data.bet?.resolved) setActiveBet(null);
       if (res.data.status === 'accepted') {
         setAlreadySolved(true);
-        // Update the challenge list solved status locally
         setChallengeList(prev => prev.map(c => c.id === id ? { ...c, user_solved: 1 } : c));
       }
       api.get(`/submissions?challenge_id=${challenge.id}`).then(r => setSubs(r.data || []));
@@ -182,6 +240,10 @@ export default function ChallengePage() {
       if (msg === 'already_solved') {
         setAlreadySolved(true);
         setResult({ error: 'You have already solved this challenge.' });
+      } else if (msg === 'time_limit_exceeded') {
+        setTimedOut(true);
+        timedOutRef.current = true;
+        setResult({ error: 'Time limit exceeded — your bet was forfeited.' });
       } else {
         setResult({ error: msg });
       }
@@ -208,6 +270,13 @@ export default function ChallengePage() {
   const potentialWin = betAmountNum * multiplier;
   const diff         = challenge.difficulty as string;
 
+  // Timer display
+  const timerColor = timeLeft === null ? '' :
+    timeLeft > 180 ? 'text-green-400' :
+    timeLeft > 60  ? 'text-yellow-400' :
+                     'text-red-400';
+  const timerPulse = (timeLeft !== null && timeLeft <= 10 && !timedOut) ? 'animate-pulse' : '';
+
   return (
     <div className="min-h-screen bg-gray-950 flex flex-col">
       <Navbar />
@@ -220,8 +289,12 @@ export default function ChallengePage() {
             <div className="px-6 pt-6 pb-4 border-b border-gray-800">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <span className={`badge text-xs capitalize ${DIFF_BADGE[diff] || 'badge'} mb-2`}>{DIFF_LABEL[diff]} · {multiplier}× payout</span>
+                  <span className={`badge text-xs capitalize ${DIFF_BADGE[diff] || 'badge'} mb-2`}>{diff} · {multiplier}× payout</span>
                   <h2 className="text-xl font-black text-white leading-tight">{challenge.title}</h2>
+                  <div className="flex items-center gap-1.5 mt-2 text-gray-400 text-xs">
+                    <Timer className="w-3.5 h-3.5 text-orange-400" />
+                    <span>You'll have <strong className="text-orange-300">5 minutes</strong> to solve after starting</span>
+                  </div>
                 </div>
                 <Coins className={`w-7 h-7 shrink-0 mt-1 ${DIFF_ACCENT[diff]}`} />
               </div>
@@ -229,9 +302,9 @@ export default function ChallengePage() {
 
             <div className="px-6 py-5 space-y-5">
               <p className="text-gray-400 text-sm">
-                Place a bet before you start. If you solve it correctly you earn{' '}
+                Place a bet before you start. If you solve it within 5 minutes you earn{' '}
                 <span className={`font-bold ${DIFF_ACCENT[diff]}`}>{multiplier}× your bet</span>.
-                If you fail, the bet goes to the platform.
+                If you fail or run out of time, the bet goes to the platform.
               </p>
 
               <div className="space-y-3">
@@ -239,10 +312,8 @@ export default function ChallengePage() {
                 <input
                   type="number" min="100" placeholder="Enter amount, e.g. 500"
                   value={betAmount} onChange={e => { setBetAmount(e.target.value); setBetError(''); }}
-                  className="input text-lg font-bold"
-                  autoFocus
+                  className="input text-lg font-bold" autoFocus
                 />
-
                 <div className="flex gap-2">
                   {[500, 1000, 2000, 5000].map(v => (
                     <button key={v} onClick={() => setBetAmount(String(v))}
@@ -281,8 +352,7 @@ export default function ChallengePage() {
                   {betLoading ? 'Placing...' : `Bet ${betAmountNum >= 100 ? betAmountNum.toLocaleString() + ' RWF' : '...'}`}
                 </button>
               </div>
-
-              <p className="text-center text-xs text-gray-600">You can only bet once per challenge</p>
+              <p className="text-center text-xs text-gray-600">Timer starts immediately after you click Start or Bet</p>
             </div>
           </div>
         </div>
@@ -295,7 +365,6 @@ export default function ChallengePage() {
         <div className="w-full lg:w-2/5 border-r border-gray-800 flex flex-col overflow-hidden">
           <div className="px-5 py-4 border-b border-gray-800 shrink-0">
 
-            {/* Already-solved banner */}
             {alreadySolved && (
               <div className="flex items-center gap-2 bg-green-900/30 border border-green-700/50 rounded-xl px-4 py-2.5 mb-3">
                 <Trophy className="w-4 h-4 text-green-400 shrink-0" />
@@ -309,7 +378,7 @@ export default function ChallengePage() {
                 <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                   <span className={`badge text-xs capitalize ${DIFF_BADGE[diff] || 'badge'}`}>{diff}</span>
                   {challenge.category && <span className="badge text-xs">{challenge.category}</span>}
-                  <span className="text-xs text-gray-600"><Clock className="w-3 h-3 inline mr-0.5" />{challenge.time_limit_ms / 1000}s</span>
+                  <span className="text-xs text-gray-600"><Clock className="w-3 h-3 inline mr-0.5" />{challenge.time_limit_ms / 1000}s exec</span>
                   {!alreadySolved && <span className={`text-xs font-bold ${DIFF_ACCENT[diff]}`}>{multiplier}× payout</span>}
                 </div>
               </div>
@@ -328,7 +397,6 @@ export default function ChallengePage() {
           <div className="flex-1 overflow-y-auto p-5 space-y-5">
             {tab === 'description' && (
               <>
-                {/* Active bet summary strip */}
                 {activeBet && !alreadySolved && (
                   <div className={`rounded-xl border px-4 py-3 flex items-center justify-between ${
                     diff === 'easy'   ? 'border-green-700/50  bg-green-900/20'  :
@@ -348,10 +416,8 @@ export default function ChallengePage() {
                   </div>
                 )}
 
-                {/* Description */}
                 <div className="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap">{challenge.description}</div>
 
-                {/* Examples */}
                 {challenge.test_cases?.length > 0 && (
                   <div>
                     <h3 className="text-sm font-semibold text-white mb-3">Examples</h3>
@@ -375,9 +441,9 @@ export default function ChallengePage() {
                 )}
 
                 <div className="text-xs text-gray-600 bg-gray-800/50 rounded-xl p-3 space-y-1">
-                  <p>⚡ Time limit: {challenge.time_limit_ms / 1000}s</p>
+                  <p>⚡ Execution limit: {challenge.time_limit_ms / 1000}s</p>
                   <p>💾 Memory: {challenge.memory_limit_mb}MB</p>
-                  <p>📤 Max: {challenge.max_submissions}/hour</p>
+                  <p>📤 Max attempts: {challenge.max_submissions}/hour</p>
                 </div>
               </>
             )}
@@ -405,10 +471,35 @@ export default function ChallengePage() {
         {/* RIGHT: Editor + Results */}
         <div className="flex-1 flex flex-col overflow-hidden relative">
 
-          {/* Lock overlay — shown until bet decision is made */}
+          {/* Lock overlay */}
           {!betReady && (
             <div className="absolute inset-0 z-10 bg-gray-950/80 backdrop-blur-sm flex items-center justify-center">
-              <p className="text-gray-500 text-sm animate-pulse">Confirm your bet to start coding…</p>
+              <p className="text-gray-500 text-sm animate-pulse">Confirm your bet to start the timer…</p>
+            </div>
+          )}
+
+          {/* TIME'S UP overlay */}
+          {timedOut && (
+            <div className="absolute inset-0 z-20 bg-gray-950/95 backdrop-blur-md flex items-center justify-center">
+              <div className="text-center space-y-4 px-8">
+                <div className="text-6xl mb-2">⏰</div>
+                <h2 className="text-4xl font-black text-red-400">Time's Up!</h2>
+                <p className="text-gray-400 text-sm">
+                  {activeBet ? 'Your bet has been forfeited to the platform.' : 'The 5-minute window has ended.'}
+                </p>
+                <div className="flex gap-3 justify-center mt-6">
+                  <button onClick={() => router.push('/challenges')}
+                    className="px-5 py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-200 font-semibold text-sm transition-colors">
+                    Back to List
+                  </button>
+                  {nextUnsolved && (
+                    <button onClick={() => router.push(`/challenges/${nextUnsolved.id}`)}
+                      className="px-5 py-2.5 rounded-xl bg-green-700 hover:bg-green-600 text-white font-bold text-sm transition-colors">
+                      Try Next Challenge
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
           )}
 
@@ -416,24 +507,21 @@ export default function ChallengePage() {
           <div className="px-4 py-2.5 border-b border-gray-800 flex items-center justify-between shrink-0">
             <div className="flex items-center gap-2">
               {/* Prev/Next navigation */}
-              <button
-                onClick={() => prevChallenge && router.push(`/challenges/${prevChallenge.id}`)}
-                disabled={!prevChallenge}
-                title={prevChallenge?.title}
+              <button onClick={() => prevChallenge && router.push(`/challenges/${prevChallenge.id}`)}
+                disabled={!prevChallenge} title={prevChallenge?.title}
                 className="btn-ghost btn-sm disabled:opacity-30 px-2">
                 <ChevronLeft className="w-4 h-4" />
               </button>
-              <button
-                onClick={() => nextChallenge && router.push(`/challenges/${nextChallenge.id}`)}
-                disabled={!nextChallenge}
-                title={nextChallenge?.title}
+              <button onClick={() => nextChallenge && router.push(`/challenges/${nextChallenge.id}`)}
+                disabled={!nextChallenge} title={nextChallenge?.title}
                 className="btn-ghost btn-sm disabled:opacity-30 px-2">
                 <ChevronRight className="w-4 h-4" />
               </button>
 
               <div className="w-px h-5 bg-gray-700 mx-1" />
 
-              <select value={language} onChange={e => onLanguageChange(e.target.value)} disabled={!betReady}
+              <select value={language} onChange={e => onLanguageChange(e.target.value)}
+                disabled={!betReady || timedOut}
                 className="bg-gray-800 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-green-500 disabled:opacity-40">
                 {(challenge.supported_languages || ['javascript']).map((l: string) => (
                   <option key={l} value={l}>{l}</option>
@@ -441,18 +529,32 @@ export default function ChallengePage() {
               </select>
             </div>
 
+            {/* CENTER: Countdown Timer */}
+            <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2">
+              {timeLeft !== null && !alreadySolved && !timedOut && (
+                <div className={`flex items-center gap-1.5 px-3 py-1 rounded-lg bg-gray-900 border border-gray-700 ${timerPulse}`}>
+                  <Timer className={`w-3.5 h-3.5 ${timerColor}`} />
+                  <span className={`font-mono text-base font-bold tracking-widest ${timerColor}`}>
+                    {formatTime(timeLeft)}
+                  </span>
+                </div>
+              )}
+            </div>
+
             <div className="flex items-center gap-2">
-              <button onClick={() => { setCode(TEMPLATES[language] || ''); setResult(null); }} disabled={!betReady} className="btn-ghost btn-sm disabled:opacity-40">
+              <button onClick={() => { setCode(TEMPLATES[language] || ''); setResult(null); }}
+                disabled={!betReady || timedOut}
+                className="btn-ghost btn-sm disabled:opacity-40">
                 <RotateCcw className="w-3.5 h-3.5" /> Reset
               </button>
               {alreadySolved ? (
-                <button
-                  onClick={() => nextUnsolved && router.push(`/challenges/${nextUnsolved.id}`)}
+                <button onClick={() => nextUnsolved && router.push(`/challenges/${nextUnsolved.id}`)}
                   className="btn-primary btn-sm">
                   Next Challenge <ChevronRight className="w-3.5 h-3.5" />
                 </button>
               ) : (
-                <button onClick={submit} disabled={submitting || !betReady} className="btn-primary btn-sm disabled:opacity-40">
+                <button onClick={submit} disabled={submitting || !betReady || timedOut}
+                  className="btn-primary btn-sm disabled:opacity-40">
                   <Play className="w-3.5 h-3.5" />
                   {submitting ? 'Running...' : 'Submit'}
                 </button>
@@ -472,7 +574,7 @@ export default function ChallengePage() {
               options={{
                 fontSize: 14, minimap: { enabled: false }, scrollBeyondLastLine: false,
                 wordWrap: 'on', tabSize: 2, padding: { top: 12 },
-                readOnly: !betReady || alreadySolved,
+                readOnly: !betReady || alreadySolved || timedOut,
               }}
             />
           </div>
@@ -496,7 +598,6 @@ export default function ChallengePage() {
                     </div>
                   ) : (
                     <>
-                      {/* Submission summary */}
                       <div className={`flex items-center gap-3 p-3 rounded-xl ${
                         result.status === 'accepted'           ? 'bg-green-900/30  border border-green-800'  :
                         result.status === 'cheating_suspected' ? 'bg-orange-900/30 border border-orange-800' :
@@ -514,15 +615,13 @@ export default function ChallengePage() {
                           </p>
                         </div>
                         {result.status === 'accepted' && nextUnsolved && (
-                          <button
-                            onClick={() => router.push(`/challenges/${nextUnsolved.id}`)}
+                          <button onClick={() => router.push(`/challenges/${nextUnsolved.id}`)}
                             className="shrink-0 px-3 py-1.5 rounded-lg bg-green-700 hover:bg-green-600 text-white text-xs font-bold transition-colors flex items-center gap-1">
                             Next <ChevronRight className="w-3 h-3" />
                           </button>
                         )}
                       </div>
 
-                      {/* Bet result */}
                       {result.bet?.resolved && (
                         <div className={`flex items-center gap-3 p-3 rounded-xl ${result.bet.won ? 'bg-amber-900/30 border border-amber-700' : 'bg-gray-800 border border-gray-700'}`}>
                           {result.bet.won
@@ -544,7 +643,6 @@ export default function ChallengePage() {
                         </div>
                       )}
 
-                      {/* Per-test case results */}
                       {result.results?.length > 0 && (
                         <div className="space-y-1.5">
                           {result.results.map((r: any) =>

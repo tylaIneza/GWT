@@ -10,6 +10,7 @@ import { ChallengesService }  from '../challenges/challenges.service';
 import { AntiCheatService }   from '../anti-cheat/anti-cheat.service';
 import { SubmitDto }          from './dto/submit.dto';
 import { BetsService }        from '../bets/bets.service';
+import { SessionsService }    from '../sessions/sessions.service';
 
 @Injectable()
 export class SubmissionsService {
@@ -22,6 +23,7 @@ export class SubmissionsService {
     private antiCheat:  AntiCheatService,
     private http:       HttpService,
     private bets:       BetsService,
+    private sessions:   SessionsService,
   ) {}
 
   async submit(dto: SubmitDto, userId: string, ip: string, userAgent: string) {
@@ -80,6 +82,11 @@ export class SubmissionsService {
 
       const contest = await this.db.queryOne('SELECT * FROM contests WHERE id = ?', [dto.contest_id]);
       if (contest?.status !== 'active') throw new BadRequestException('Contest not active');
+    }
+
+    // Validate session timing (throws if expired)
+    if (!dto.contest_id) {
+      await this.sessions.validateOrThrow(userId, dto.challenge_id);
     }
 
     const preRisk = await this.antiCheat.scorePreSubmission(dto, userId, ip);
@@ -148,6 +155,10 @@ export class SubmissionsService {
       [status, score, execResult.timeMs || 0, execResult.memoryMb || 0,
        JSON.stringify(execResult.results || []), riskScore, subId],
     );
+
+    if (status === 'accepted' && !dto.contest_id) {
+      await this.sessions.complete(userId, dto.challenge_id);
+    }
 
     if (dto.contest_id && status === 'accepted') {
       await this.updateLeaderboard(dto.contest_id, userId, score, execResult.timeMs || 0);

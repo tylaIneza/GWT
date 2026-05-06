@@ -10,6 +10,7 @@ import { AntiCheatModule }  from './anti-cheat/anti-cheat.module';
 import { LeaderboardModule }from './leaderboard/leaderboard.module';
 import { AdminModule }      from './admin/admin.module';
 import { BetsModule }       from './bets/bets.module';
+import { SessionsModule }   from './sessions/sessions.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { BetsModule }       from './bets/bets.module';
     LeaderboardModule,
     AdminModule,
     BetsModule,
+    SessionsModule,
   ],
 })
 export class AppModule {}

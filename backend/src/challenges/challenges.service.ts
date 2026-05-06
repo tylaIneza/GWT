@@ -136,6 +136,27 @@ export class ChallengesService {
     return this.parseChallenge(updated);
   }
 
+  async getRandomChallenge(userId: string) {
+    const challenge = await this.db.queryOne<any>(
+      `SELECT c.id, c.title, c.difficulty, c.category, c.slug
+       FROM challenges c
+       WHERE c.is_published = 1
+         AND c.id NOT IN (
+           SELECT s.challenge_id FROM submissions s
+           WHERE s.user_id = ? AND s.status = 'accepted'
+         )
+         AND c.id NOT IN (
+           SELECT cs.challenge_id FROM challenge_sessions cs
+           WHERE cs.status = 'active' AND cs.user_id != ? AND cs.expires_at > NOW()
+         )
+       ORDER BY RAND()
+       LIMIT 1`,
+      [userId, userId],
+    );
+    if (!challenge) return { id: null, message: 'You have solved all available challenges!' };
+    return challenge;
+  }
+
   async delete(id: string) {
     await this.db.execute('DELETE FROM challenges WHERE id = ?', [id]);
     return { success: true };
