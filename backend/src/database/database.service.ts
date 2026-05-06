@@ -20,6 +20,19 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     });
     await this.pool.query('SELECT 1');
     this.logger.log('MySQL (MariaDB) connected');
+    await this.pool.execute(`
+      CREATE TABLE IF NOT EXISTS challenge_sessions (
+        id           VARCHAR(36)                             NOT NULL PRIMARY KEY,
+        user_id      VARCHAR(36)                             NOT NULL,
+        challenge_id VARCHAR(36)                             NOT NULL,
+        status       ENUM('active','completed','timed_out')  NOT NULL DEFAULT 'active',
+        started_at   DATETIME                                NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        expires_at   DATETIME                                NOT NULL,
+        INDEX idx_uc (user_id, challenge_id),
+        FOREIGN KEY (user_id)      REFERENCES users(id)      ON DELETE CASCADE,
+        FOREIGN KEY (challenge_id) REFERENCES challenges(id) ON DELETE CASCADE
+      )
+    `);
   }
 
   async onModuleDestroy() {

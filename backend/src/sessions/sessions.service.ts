@@ -1,4 +1,4 @@
-import { Injectable, ForbiddenException, OnModuleInit } from '@nestjs/common';
+import { Injectable, ForbiddenException } from '@nestjs/common';
 import { v4 as uuid } from 'uuid';
 import { DatabaseService } from '../database/database.service';
 import { BetsService }    from '../bets/bets.service';
@@ -6,29 +6,11 @@ import { BetsService }    from '../bets/bets.service';
 const SESSION_MS = 5 * 60 * 1000; // 5 minutes
 
 @Injectable()
-export class SessionsService implements OnModuleInit {
+export class SessionsService {
   constructor(
     private db:   DatabaseService,
     private bets: BetsService,
   ) {}
-
-  async onModuleInit() { await this.ensureTable(); }
-
-  async ensureTable() {
-    await this.db.execute(`
-      CREATE TABLE IF NOT EXISTS challenge_sessions (
-        id           VARCHAR(36)                             NOT NULL PRIMARY KEY,
-        user_id      VARCHAR(36)                             NOT NULL,
-        challenge_id VARCHAR(36)                             NOT NULL,
-        status       ENUM('active','completed','timed_out')  NOT NULL DEFAULT 'active',
-        started_at   DATETIME                                NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        expires_at   DATETIME                                NOT NULL,
-        INDEX idx_uc (user_id, challenge_id),
-        FOREIGN KEY (user_id)      REFERENCES users(id)      ON DELETE CASCADE,
-        FOREIGN KEY (challenge_id) REFERENCES challenges(id) ON DELETE CASCADE
-      )
-    `);
-  }
 
   async start(userId: string, challengeId: string) {
     const existing = await this.db.queryOne<any>(
