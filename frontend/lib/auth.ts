@@ -14,3 +14,4 @@ export const getUser   = (): any => {
   try { return JSON.parse(localStorage.getItem('gwt_user') || 'null'); } catch { return null; }
 };
 export const isAdmin   = () => getUser()?.role === 'admin';
+export const logout    = () => { clearAuth(); window.location.href = '/auth/login'; };
