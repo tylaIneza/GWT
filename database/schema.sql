@@ -234,13 +234,13 @@ CREATE TABLE IF NOT EXISTS challenge_bets (
   INDEX idx_bet_user_challenge (user_id, challenge_id)
 );
 
--- Seed admin user  (password: Admin@1234)
+-- Seed admin user  (password: Ineza@12)
 INSERT IGNORE INTO users (id, name, email, password_hash, role)
 VALUES (
   'admin-00000000-0000-0000-0000-000000000001',
   'Platform Admin',
-  'admin@codearena.rw',
-  '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TqwnlfX1CLSKg1/GvMSrPRVGdFli',
+  'inezapaccy4@gmail.com',
+  '$2a$12$xKCO2yWIuiQNoJtsDGtXcuSyJQDyre2H3Ixnsi80QFvJQbdNLwQj.',
   'admin'
 );
 
