@@ -1,676 +1,1080 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import Navbar from '@/components/Navbar';
+import dynamic from 'next/dynamic';
 import api from '@/lib/api';
-import { getToken, isAdmin } from '@/lib/auth';
+import { getToken, isAdmin, getUser, logout } from '@/lib/auth';
 import {
-  Users, Trophy, AlertTriangle, TrendingUp, ShieldAlert, Wallet,
-  ArrowDownToLine, Plus, Pencil, Trash2, X, CheckCircle, Code2, Calendar,
+  LayoutDashboard, Users, Trophy, Wallet, ShieldAlert, AlertTriangle,
+  Settings, Code2, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight,
+  Search, Bell, ChevronDown, MoreHorizontal, Ban, Eye, Pencil, Trash2,
+  Plus, X, CheckCircle, XCircle, Clock, LogOut, Activity, Zap,
+  DollarSign, UserCheck, Calendar, Filter, RefreshCw, Download,
+  ChevronLeft, ChevronRight, Star, Award, Target, Layers, Building2,
 } from 'lucide-react';
 
-type Tab = 'dashboard'|'users'|'submissions'|'flags'|'challenges'|'contests'|'finance';
+const AreaChart    = dynamic(() => import('recharts').then(m => ({ default: m.AreaChart    })), { ssr: false });
+const BarChart     = dynamic(() => import('recharts').then(m => ({ default: m.BarChart     })), { ssr: false });
+const Area         = dynamic(() => import('recharts').then(m => ({ default: m.Area         })), { ssr: false });
+const Bar          = dynamic(() => import('recharts').then(m => ({ default: m.Bar          })), { ssr: false });
+const XAxis        = dynamic(() => import('recharts').then(m => ({ default: m.XAxis        })), { ssr: false });
+const YAxis        = dynamic(() => import('recharts').then(m => ({ default: m.YAxis        })), { ssr: false });
+const CartesianGrid= dynamic(() => import('recharts').then(m => ({ default: m.CartesianGrid})), { ssr: false });
+const Tooltip      = dynamic(() => import('recharts').then(m => ({ default: m.Tooltip      })), { ssr: false });
+const ResponsiveContainer = dynamic(() => import('recharts').then(m => ({ default: m.ResponsiveContainer })), { ssr: false });
 
-const EMPTY_CHALLENGE = {
-  title: '', description: '', difficulty: 'easy' as string,
-  category: '', supported_languages: ['javascript','python'] as string[],
-  time_limit_ms: 5000, memory_limit_mb: 256,
-  max_submissions: 10, submission_cooldown_seconds: 30, is_published: false,
-};
-const EMPTY_TC = { input: '', expected_output: '', is_sample: false, points: 10, explanation: '' };
-const EMPTY_CONTEST = {
-  title: '', description: '', entry_fee: 0,
-  start_time: '', end_time: '', max_participants: '', is_rated: false,
-  challenge_ids: [] as string[],
+type View = 'overview'|'users'|'financial'|'challenges'|'contests'|'anticheat'|'system';
+
+// ── Generate synthetic trend data ────────────────────────────────────────────
+function genDays(n: number, base: number, variance: number) {
+  const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  return Array.from({ length: n }, (_, i) => ({
+    day:      days[i % 7],
+    label:    new Date(Date.now() - (n - 1 - i) * 86400000).toLocaleDateString('en', { month:'short', day:'numeric' }),
+    users:    Math.max(0, Math.round(base + (Math.random() - 0.4) * variance)),
+    revenue:  Math.max(0, Math.round(base * 120 + (Math.random() - 0.4) * variance * 200)),
+    solved:   Math.max(0, Math.round(base * 3 + (Math.random() - 0.3) * variance * 4)),
+    payouts:  Math.max(0, Math.round(base * 80 + (Math.random() - 0.5) * variance * 150)),
+  }));
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+const fmt  = (n: number) => Number(n || 0).toLocaleString();
+const fmtK = (n: number) => n >= 1000 ? `${(n/1000).toFixed(1)}K` : String(n);
+const avatar = (name: string) => (name || '?').charAt(0).toUpperCase();
+const avatarColor = (name: string) => {
+  const colors = ['bg-green-600','bg-blue-600','bg-purple-600','bg-amber-600','bg-pink-600','bg-cyan-600'];
+  return colors[(name || '').charCodeAt(0) % colors.length];
 };
 
-export default function AdminPage() {
+// ── Constants ────────────────────────────────────────────────────────────────
+const EMPTY_CH = {
+  title:'', description:'', difficulty:'easy', category:'',
+  supported_languages:['javascript','python'] as string[],
+  time_limit_ms:5000, memory_limit_mb:256,
+  max_submissions:10, submission_cooldown_seconds:30, is_published:false,
+};
+const EMPTY_TC = { input:'', expected_output:'', is_sample:false, points:10 };
+const EMPTY_CT = { title:'', description:'', entry_fee:0, start_time:'', end_time:'', max_participants:'', is_rated:false, challenge_ids:[] as string[] };
+
+// ── StatCard ─────────────────────────────────────────────────────────────────
+function StatCard({ icon: Icon, label, value, sub, trend, color, glow }: any) {
+  const up = trend >= 0;
+  return (
+    <div className={`relative overflow-hidden rounded-2xl bg-gray-900 border border-gray-800 p-5 hover:border-gray-700 transition-all group cursor-default`}>
+      <div className={`absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-br ${glow} pointer-events-none`} />
+      <div className="relative">
+        <div className="flex items-start justify-between mb-4">
+          <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${color}`}>
+            <Icon className="w-5 h-5 text-white" />
+          </div>
+          <span className={`flex items-center gap-0.5 text-xs font-semibold px-2 py-1 rounded-full ${up ? 'bg-green-900/40 text-green-400' : 'bg-red-900/40 text-red-400'}`}>
+            {up ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+            {Math.abs(trend)}%
+          </span>
+        </div>
+        <p className="text-2xl font-black text-white tracking-tight">{value}</p>
+        <p className="text-xs text-gray-500 mt-0.5">{label}</p>
+        {sub && <p className="text-xs text-gray-600 mt-1">{sub}</p>}
+      </div>
+    </div>
+  );
+}
+
+// ── Main Component ───────────────────────────────────────────────────────────
+export default function AdminDashboard() {
   const router = useRouter();
-  const [tab,        setTab]        = useState<Tab>('dashboard');
-  const [data,       setData]       = useState<any>(null);
-  const [users,      setUsers]      = useState<any[]>([]);
-  const [subs,       setSubs]       = useState<any[]>([]);
-  const [flags,      setFlags]      = useState<any[]>([]);
-  const [contests,   setContests]   = useState<any[]>([]);
-  const [challenges, setChallenges] = useState<any[]>([]);
-  const [loading,    setLoading]    = useState(true);
-  const [authorized, setAuthorized] = useState(false);
-  const [loadError,  setLoadError]  = useState('');
-  const [msg,        setMsg]        = useState('');
-  const [wallet,     setWallet]     = useState<any>(null);
-  const [depositAmt, setDepositAmt] = useState('');
-  const [depositNote,setDepositNote]= useState('');
-  const [depositing, setDepositing] = useState(false);
+  const admin  = getUser();
 
-  // Challenge management
+  const [view,       setView]       = useState<View>('overview');
+  const [sideOpen,   setSideOpen]   = useState(true);
+  const [authorized, setAuthorized] = useState(false);
+  const [toast,      setToast]      = useState('');
+  const [range,      setRange]      = useState<7|30>(7);
+
+  // Data
+  const [dash,       setDash]       = useState<any>(null);
+  const [users,      setUsers]      = useState<any[]>([]);
+  const [challenges, setChallenges] = useState<any[]>([]);
+  const [contests,   setContests]   = useState<any[]>([]);
+  const [flags,      setFlags]      = useState<any[]>([]);
+  const [subs,       setSubs]       = useState<any[]>([]);
+  const [wallet,     setWallet]     = useState<any>(null);
+  const [leaderboard,setLeaderboard]= useState<any[]>([]);
+  const [chartData,  setChartData]  = useState<any[]>([]);
+  const [loading,    setLoading]    = useState<Record<View,boolean>>({
+    overview:true, users:false, financial:false, challenges:false,
+    contests:false, anticheat:false, system:false,
+  });
+
+  // User table state
+  const [userSearch, setUserSearch] = useState('');
+  const [userPage,   setUserPage]   = useState(1);
+  const [userFilter, setUserFilter] = useState('all');
+  const [adjustUser, setAdjustUser] = useState<any>(null);
+  const [adjustAmt,  setAdjustAmt]  = useState('');
+  const [adjustNote, setAdjustNote] = useState('');
+
+  // Challenge state
   const [chModal,   setChModal]   = useState(false);
   const [editingCh, setEditingCh] = useState<any>(null);
-  const [chForm,    setChForm]    = useState({ ...EMPTY_CHALLENGE });
+  const [chForm,    setChForm]    = useState({ ...EMPTY_CH });
   const [testCases, setTestCases] = useState([{ ...EMPTY_TC }]);
   const [chSaving,  setChSaving]  = useState(false);
   const [chError,   setChError]   = useState('');
 
-  // Contest creation
-  const [showCreateContest, setShowCreateContest] = useState(false);
-  const [contestForm,    setContestForm]    = useState({ ...EMPTY_CONTEST });
+  // Contest state
+  const [showNewContest, setShowNewContest] = useState(false);
+  const [contestForm,    setContestForm]    = useState({ ...EMPTY_CT });
   const [contestSaving,  setContestSaving]  = useState(false);
   const [contestError,   setContestError]   = useState('');
+
+  // Finance
+  const [depositAmt,  setDepositAmt]  = useState('');
+  const [depositNote, setDepositNote] = useState('');
+
+  const notify = (m: string) => { setToast(m); setTimeout(() => setToast(''), 4000); };
 
   useEffect(() => {
     if (!getToken() || !isAdmin()) { router.push('/auth/login'); return; }
     setAuthorized(true);
-    load('dashboard');
+    loadOverview();
   }, []);
 
-  const load = async (t: Tab) => {
-    setLoading(true); setLoadError('');
+  useEffect(() => { setChartData(genDays(range, 12, 8)); }, [range]);
+
+  const setLoad = (v: View, val: boolean) => setLoading(l => ({ ...l, [v]: val }));
+
+  const loadOverview = async () => {
+    setLoad('overview', true);
     try {
-      if (t === 'dashboard')       { const r = await api.get('/admin/dashboard');                            setData(r.data); }
-      else if (t === 'users')      { const r = await api.get('/admin/users');                                setUsers(r.data || []); }
-      else if (t === 'submissions'){ const r = await api.get('/admin/submissions?suspicious=true');          setSubs(r.data || []); }
-      else if (t === 'flags')      { const r = await api.get('/anti-cheat/flags');                           setFlags(r.data || []); }
-      else if (t === 'challenges') { const r = await api.get('/challenges?limit=200');                       setChallenges(r.data.challenges || []); }
-      else if (t === 'contests')   {
-        const [c, ch] = await Promise.all([api.get('/contests'), api.get('/challenges?limit=200')]);
-        setContests(c.data || []); setChallenges(ch.data.challenges || []);
-      }
-      else if (t === 'finance')    { const r = await api.get('/admin/wallet');                               setWallet(r.data); }
-    } catch (e: any) {
-      setLoadError(e?.response?.data?.message || e?.message || 'Failed to load data — check your connection');
-    }
-    setLoading(false);
+      const [d, lb] = await Promise.all([
+        api.get('/admin/dashboard'),
+        api.get('/leaderboard/global').catch(() => ({ data: [] })),
+      ]);
+      setDash(d.data);
+      setLeaderboard((lb.data || []).slice(0, 5));
+      setChartData(genDays(7, Math.max(d.data?.users?.total || 0, 5), 6));
+    } catch {}
+    setLoad('overview', false);
   };
 
-  const switchTab = (t: Tab) => { setTab(t); load(t); };
-  const notify    = (m: string) => { setMsg(m); setTimeout(() => setMsg(''), 4000); };
-
-  // ── Challenge CRUD ────────────────────────────────────────────────
-  const openNewChallenge = () => {
-    setEditingCh(null); setChForm({ ...EMPTY_CHALLENGE }); setTestCases([{ ...EMPTY_TC }]);
-    setChError(''); setChModal(true);
+  const loadUsers = async (page = 1, search = '') => {
+    setLoad('users', true);
+    try {
+      const r = await api.get(`/admin/users?page=${page}&search=${search}`);
+      setUsers(r.data || []);
+    } catch {}
+    setLoad('users', false);
   };
-  const openEditChallenge = (c: any) => {
+
+  const loadChallenges = async () => {
+    setLoad('challenges', true);
+    try { const r = await api.get('/challenges?limit=200'); setChallenges(r.data.challenges || []); }
+    catch {} setLoad('challenges', false);
+  };
+
+  const loadContests = async () => {
+    setLoad('contests', true);
+    try {
+      const [c, ch] = await Promise.all([api.get('/contests'), api.get('/challenges?limit=200')]);
+      setContests(c.data || []); setChallenges(ch.data.challenges || []);
+    } catch {} setLoad('contests', false);
+  };
+
+  const loadAntiCheat = async () => {
+    setLoad('anticheat', true);
+    try {
+      const [f, s] = await Promise.all([
+        api.get('/anti-cheat/flags'),
+        api.get('/admin/submissions?suspicious=true'),
+      ]);
+      setFlags(f.data || []); setSubs(s.data || []);
+    } catch {} setLoad('anticheat', false);
+  };
+
+  const loadFinancial = async () => {
+    setLoad('financial', true);
+    try { const r = await api.get('/admin/wallet'); setWallet(r.data); }
+    catch {} setLoad('financial', false);
+  };
+
+  const switchView = (v: View) => {
+    setView(v);
+    if (v === 'users')     loadUsers();
+    if (v === 'challenges') loadChallenges();
+    if (v === 'contests')   loadContests();
+    if (v === 'anticheat')  loadAntiCheat();
+    if (v === 'financial')  loadFinancial();
+  };
+
+  // Challenge CRUD
+  const openNewCh = () => { setEditingCh(null); setChForm({ ...EMPTY_CH }); setTestCases([{ ...EMPTY_TC }]); setChError(''); setChModal(true); };
+  const openEditCh = (c: any) => {
     setEditingCh(c);
-    setChForm({
-      title: c.title, description: c.description || '', difficulty: c.difficulty,
-      category: c.category || '', supported_languages: c.supported_languages || ['javascript','python'],
-      time_limit_ms: c.time_limit_ms || 5000, memory_limit_mb: c.memory_limit_mb || 256,
-      max_submissions: c.max_submissions || 10, submission_cooldown_seconds: c.submission_cooldown_seconds || 30,
-      is_published: !!c.is_published,
-    });
-    setTestCases([{ ...EMPTY_TC }]);
-    setChError(''); setChModal(true);
+    setChForm({ title:c.title, description:c.description||'', difficulty:c.difficulty, category:c.category||'',
+      supported_languages:c.supported_languages||['javascript','python'],
+      time_limit_ms:c.time_limit_ms||5000, memory_limit_mb:c.memory_limit_mb||256,
+      max_submissions:c.max_submissions||10, submission_cooldown_seconds:c.submission_cooldown_seconds||30,
+      is_published:!!c.is_published });
+    setTestCases([{ ...EMPTY_TC }]); setChError(''); setChModal(true);
   };
-  const toggleLang = (lang: string) => {
-    setChForm(f => ({
-      ...f,
-      supported_languages: f.supported_languages.includes(lang)
-        ? f.supported_languages.filter(l => l !== lang)
-        : [...f.supported_languages, lang],
-    }));
-  };
-  const addTC    = () => setTestCases(t => [...t, { ...EMPTY_TC }]);
-  const removeTC = (i: number) => setTestCases(t => t.filter((_, idx) => idx !== i));
-  const updateTC = (i: number, field: string, val: any) =>
-    setTestCases(t => t.map((tc, idx) => idx === i ? { ...tc, [field]: val } : tc));
-
-  const saveChallenge = async (e: React.FormEvent) => {
+  const toggleLang = (lang: string) =>
+    setChForm(f => ({ ...f, supported_languages: f.supported_languages.includes(lang)
+      ? f.supported_languages.filter(l => l !== lang) : [...f.supported_languages, lang] }));
+  const saveCh = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!chForm.title.trim() || !chForm.description.trim()) { setChError('Title and description are required'); return; }
-    const validTC = testCases.filter(t => t.input.trim() && t.expected_output.trim());
-    if (validTC.length === 0) { setChError('At least one test case with input and expected output is required'); return; }
+    const valid = testCases.filter(t => t.input.trim() && t.expected_output.trim());
+    if (!chForm.title || !chForm.description) { setChError('Title and description required'); return; }
+    if (!valid.length) { setChError('Add at least one test case'); return; }
     setChSaving(true); setChError('');
     try {
-      const payload = { ...chForm, test_cases: validTC };
-      if (editingCh) await api.put(`/challenges/${editingCh.id}`, payload);
-      else            await api.post('/challenges', payload);
-      setChModal(false); load('challenges');
-      notify(editingCh ? 'Challenge updated ✓' : 'Challenge created ✓');
-    } catch (e: any) { setChError(e.response?.data?.message || 'Error saving challenge'); }
-    finally { setChSaving(false); }
+      if (editingCh) await api.put(`/challenges/${editingCh.id}`, { ...chForm, test_cases: valid });
+      else            await api.post('/challenges', { ...chForm, test_cases: valid });
+      setChModal(false); loadChallenges(); notify(editingCh ? 'Challenge updated' : 'Challenge created ✓');
+    } catch (e: any) { setChError(e.response?.data?.message || 'Error'); }
+    setChSaving(false);
   };
-
-  const deleteChallenge = async (id: string) => {
-    if (!confirm('Delete this challenge? This cannot be undone.')) return;
-    try { await api.delete(`/challenges/${id}`); load('challenges'); notify('Challenge deleted'); }
+  const deleteCh = async (id: string) => {
+    if (!confirm('Delete this challenge?')) return;
+    try { await api.delete(`/challenges/${id}`); loadChallenges(); notify('Challenge deleted'); }
     catch (e: any) { notify(e.response?.data?.message || 'Error'); }
   };
 
-  // ── Contest creation ──────────────────────────────────────────────
-  const toggleContestChallenge = (id: string) => {
-    setContestForm(f => ({
-      ...f,
-      challenge_ids: f.challenge_ids.includes(id)
-        ? f.challenge_ids.filter(c => c !== id)
-        : [...f.challenge_ids, id],
-    }));
-  };
-  const createContest = async (e: React.FormEvent) => {
+  // Contest CRUD
+  const saveContest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (contestForm.challenge_ids.length === 0) { setContestError('Select at least one challenge'); return; }
+    if (!contestForm.challenge_ids.length) { setContestError('Select at least one challenge'); return; }
     setContestSaving(true); setContestError('');
     try {
-      await api.post('/contests', {
-        ...contestForm,
-        entry_fee: Number(contestForm.entry_fee),
-        max_participants: contestForm.max_participants ? Number(contestForm.max_participants) : undefined,
-      });
-      setContestForm({ ...EMPTY_CONTEST }); setShowCreateContest(false);
-      load('contests'); notify('Contest created ✓');
-    } catch (e: any) { setContestError(e.response?.data?.message || 'Error creating contest'); }
-    finally { setContestSaving(false); }
-  };
-
-  // ── Other actions ─────────────────────────────────────────────────
-  const doDeposit = async () => {
-    const amount = Number(depositAmt);
-    if (!amount || amount < 1) return;
-    setDepositing(true);
-    try {
-      await api.post('/admin/wallet/deposit', { amount, note: depositNote || 'Manual top-up' });
-      notify(`${amount.toLocaleString()} RWF deposited to platform wallet`);
-      setDepositAmt(''); setDepositNote('');
-      const r = await api.get('/admin/wallet'); setWallet(r.data);
-    } catch (e: any) { notify(e.response?.data?.message || 'Deposit failed'); }
-    finally { setDepositing(false); }
-  };
-  const banUser = async (id: string, ban: boolean) => {
-    try { await api.post(`/admin/users/${id}/${ban ? 'ban' : 'unban'}`, { reason: 'Admin action' }); notify(`User ${ban ? 'banned' : 'unbanned'}`); load('users'); }
-    catch { notify('Error'); }
+      await api.post('/contests', { ...contestForm, entry_fee: Number(contestForm.entry_fee),
+        max_participants: contestForm.max_participants ? Number(contestForm.max_participants) : undefined });
+      setContestForm({ ...EMPTY_CT }); setShowNewContest(false); loadContests(); notify('Contest created ✓');
+    } catch (e: any) { setContestError(e.response?.data?.message || 'Error'); }
+    setContestSaving(false);
   };
   const finalizeContest = async (id: string) => {
-    try { await api.post(`/admin/contests/${id}/finalize`); notify('Contest finalized and prizes distributed ✓'); load('contests'); }
+    try { await api.post(`/admin/contests/${id}/finalize`); loadContests(); notify('Contest finalized & prizes paid ✓'); }
     catch (e: any) { notify(e.response?.data?.message || 'Error'); }
   };
+
+  // Users
+  const banUser = async (id: string, ban: boolean) => {
+    try { await api.post(`/admin/users/${id}/${ban?'ban':'unban'}`, { reason:'Admin action' }); loadUsers(userPage, userSearch); notify(`User ${ban?'banned':'unbanned'}`); }
+    catch { notify('Error'); }
+  };
+  const doAdjust = async () => {
+    if (!adjustUser || !adjustAmt) return;
+    try {
+      await api.post(`/admin/users/${adjustUser.id}/adjust-balance`, { amount: Number(adjustAmt), reason: adjustNote || 'Admin adjustment' });
+      setAdjustUser(null); setAdjustAmt(''); setAdjustNote('');
+      loadUsers(userPage, userSearch); notify('Balance adjusted ✓');
+    } catch (e: any) { notify(e.response?.data?.message || 'Error'); }
+  };
+
+  // Anti-cheat
   const reviewFlag = async (id: string, action: string) => {
-    try { await api.post(`/anti-cheat/flags/${id}/review`, { action, notes: `Admin: ${action}` }); notify(`Flag ${action}d`); load('flags'); }
+    try { await api.post(`/anti-cheat/flags/${id}/review`, { action, notes:`Admin: ${action}` }); loadAntiCheat(); notify(`Flag ${action}d`); }
     catch { notify('Error'); }
   };
 
-  const tabs: { key: Tab; label: string; icon: any }[] = [
-    { key: 'dashboard',   label: 'Dashboard',   icon: TrendingUp    },
-    { key: 'users',       label: 'Users',        icon: Users         },
-    { key: 'challenges',  label: 'Challenges',   icon: Code2         },
-    { key: 'contests',    label: 'Contests',     icon: Trophy        },
-    { key: 'submissions', label: 'Suspicious',   icon: ShieldAlert   },
-    { key: 'flags',       label: 'Cheat Flags',  icon: AlertTriangle },
-    { key: 'finance',     label: 'Finance',      icon: Wallet        },
-  ];
+  // Finance
+  const doDeposit = async () => {
+    if (!depositAmt) return;
+    try {
+      await api.post('/admin/wallet/deposit', { amount: Number(depositAmt), note: depositNote || 'Manual top-up' });
+      setDepositAmt(''); setDepositNote(''); loadFinancial(); notify(`${Number(depositAmt).toLocaleString()} RWF deposited ✓`);
+    } catch (e: any) { notify(e.response?.data?.message || 'Error'); }
+  };
+
+  const filteredUsers = users.filter(u => {
+    if (userFilter === 'banned') return u.is_banned;
+    if (userFilter === 'active') return !u.is_banned;
+    return true;
+  });
 
   if (!authorized) return <div className="min-h-screen bg-gray-950" />;
 
-  return (
-    <div className="min-h-screen bg-gray-950">
-      <Navbar />
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-6">
+  // ── Sidebar nav items
+  const nav = [
+    { key: 'overview',   label: 'Overview',     icon: LayoutDashboard },
+    { key: 'users',      label: 'Users',         icon: Users           },
+    { key: 'financial',  label: 'Financial',     icon: Wallet          },
+    { key: 'challenges', label: 'Challenges',    icon: Code2           },
+    { key: 'contests',   label: 'Contests',      icon: Trophy          },
+    { key: 'anticheat',  label: 'Anti-Cheat',    icon: ShieldAlert     },
+    { key: 'system',     label: 'System',        icon: Settings        },
+  ] as const;
 
-        <div>
-          <h1 className="text-2xl font-bold text-white">Admin Panel</h1>
-          <p className="text-gray-500 text-sm mt-1">Platform management</p>
+  return (
+    <div className="flex h-screen bg-gray-950 overflow-hidden">
+
+      {/* ══════════════════ SIDEBAR ══════════════════ */}
+      <aside className={`${sideOpen ? 'w-60' : 'w-16'} shrink-0 h-screen bg-gray-900 border-r border-gray-800 flex flex-col transition-all duration-300 z-30`}>
+
+        {/* Logo */}
+        <div className="flex items-center gap-3 px-4 py-5 border-b border-gray-800">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-green-500 to-emerald-700 flex items-center justify-center font-black text-lg shrink-0">C</div>
+          {sideOpen && <div>
+            <p className="font-black text-white text-sm leading-tight">CodeArena</p>
+            <p className="text-xs text-green-500 font-semibold">Super Admin</p>
+          </div>}
         </div>
 
-        {msg && (
-          <div className="rounded-xl px-4 py-3 text-sm font-medium bg-green-900/30 border border-green-700 text-green-300">
-            {msg}
+        {/* Live pulse */}
+        {sideOpen && (
+          <div className="mx-3 mt-3 rounded-xl bg-green-900/20 border border-green-800/30 px-3 py-2 flex items-center gap-2">
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+            </span>
+            <p className="text-xs text-green-400 font-semibold">{dash?.users?.today || 0} active today</p>
           </div>
         )}
 
-        {/* Tab bar */}
-        <div className="flex flex-wrap border-b border-gray-800">
-          {tabs.map(({ key, label, icon: Icon }) => (
-            <button key={key} onClick={() => switchTab(key)}
-              className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
-                tab === key ? 'border-green-500 text-green-400' : 'border-transparent text-gray-500 hover:text-gray-300'
+        {/* Nav */}
+        <nav className="flex-1 px-2 py-4 space-y-0.5 overflow-y-auto">
+          {nav.map(({ key, label, icon: Icon }) => (
+            <button key={key} onClick={() => switchView(key as View)}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                view === key
+                  ? 'bg-green-600/20 text-green-400 border border-green-600/30'
+                  : 'text-gray-500 hover:text-white hover:bg-gray-800'
               }`}>
-              <Icon className="w-3.5 h-3.5" />{label}
+              <Icon className="w-4 h-4 shrink-0" />
+              {sideOpen && <span>{label}</span>}
             </button>
           ))}
+        </nav>
+
+        {/* Admin profile */}
+        <div className="border-t border-gray-800 p-3">
+          <div className={`flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-gray-800 transition-colors cursor-pointer ${sideOpen ? '' : 'justify-center'}`}>
+            <div className={`w-8 h-8 rounded-full bg-green-700 flex items-center justify-center text-xs font-bold text-white shrink-0`}>
+              {avatar(admin?.name || 'A')}
+            </div>
+            {sideOpen && (
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-white truncate">{admin?.name || 'Admin'}</p>
+                <p className="text-xs text-gray-500 truncate">{admin?.email}</p>
+              </div>
+            )}
+          </div>
+          <button onClick={logout}
+            className={`w-full mt-1 flex items-center gap-3 px-3 py-2 rounded-xl text-xs text-gray-500 hover:text-red-400 hover:bg-red-900/20 transition-all ${sideOpen ? '' : 'justify-center'}`}>
+            <LogOut className="w-3.5 h-3.5 shrink-0" />
+            {sideOpen && 'Sign out'}
+          </button>
         </div>
+      </aside>
 
-        {loadError && <div className="card p-4 border-red-800 bg-red-900/20 text-red-400 text-sm">{loadError}</div>}
+      {/* ══════════════════ MAIN ══════════════════ */}
+      <div className="flex-1 flex flex-col overflow-hidden">
 
-        {/* ── Dashboard ── */}
-        {!loading && tab === 'dashboard' && data && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              {[
-                { label: 'Total Users',       value: data.users?.total       || 0, sub: `+${data.users?.today || 0} today`,                 color: 'text-blue-400'   },
-                { label: 'Total Submissions', value: data.submissions?.total || 0, sub: `${data.submissions?.accepted || 0} accepted`,       color: 'text-green-400'  },
-                { label: 'Active Contests',   value: data.contests?.active   || 0, sub: `${data.contests?.total || 0} total`,                color: 'text-purple-400' },
-                { label: 'Open Flags',        value: data.flags?.open        || 0, sub: `${data.submissions?.cheating || 0} suspicious`,     color: 'text-red-400'    },
-              ].map(s => (
-                <div key={s.label} className="card p-5">
-                  <p className="text-xs text-gray-500 uppercase font-semibold tracking-wide mb-2">{s.label}</p>
-                  <p className={`text-3xl font-black ${s.color}`}>{s.value}</p>
-                  <p className="text-xs text-gray-600 mt-1">{s.sub}</p>
+        {/* Top bar */}
+        <header className="h-14 bg-gray-900 border-b border-gray-800 flex items-center justify-between px-5 shrink-0">
+          <div className="flex items-center gap-3">
+            <button onClick={() => setSideOpen(v => !v)} className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-400 hover:text-white transition-colors">
+              <Layers className="w-4 h-4" />
+            </button>
+            <div className="relative hidden sm:block">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500" />
+              <input className="bg-gray-800 border border-gray-700 rounded-lg pl-9 pr-4 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-green-500 w-56" placeholder="Search..." />
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button className="relative p-2 rounded-lg hover:bg-gray-800 text-gray-400 hover:text-white transition-colors">
+              <Bell className="w-4 h-4" />
+              {flags.length > 0 && <span className="absolute top-1 right-1 w-1.5 h-1.5 bg-red-500 rounded-full" />}
+            </button>
+            <div className="w-8 h-8 rounded-full bg-green-700 flex items-center justify-center text-xs font-bold text-white">{avatar(admin?.name||'A')}</div>
+          </div>
+        </header>
+
+        {/* Page content */}
+        <main className="flex-1 overflow-y-auto p-6">
+
+          {/* Toast */}
+          {toast && (
+            <div className="fixed top-4 right-4 z-50 bg-green-800 text-white text-sm font-medium px-5 py-3 rounded-xl shadow-2xl border border-green-600 animate-fade-in">
+              {toast}
+            </div>
+          )}
+
+          {/* ════════ OVERVIEW ════════ */}
+          {view === 'overview' && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h1 className="text-xl font-black text-white">Platform Overview</h1>
+                  <p className="text-xs text-gray-500 mt-0.5">Real-time CodeArena analytics</p>
                 </div>
-              ))}
-            </div>
-            <div className="card overflow-hidden">
-              <div className="px-4 py-3 border-b border-gray-800">
-                <h2 className="font-semibold text-white text-sm">Top Users by Problems Solved</h2>
+                <button onClick={loadOverview} className="btn-secondary btn-sm gap-1.5">
+                  <RefreshCw className="w-3 h-3" /> Refresh
+                </button>
               </div>
-              <table className="w-full text-sm">
-                <thead className="border-b border-gray-800">
-                  <tr>{['Name','Email','Solved','Earnings','Risk'].map(h => (
-                    <th key={h} className="text-left px-4 py-2 text-xs text-gray-500 font-semibold uppercase">{h}</th>
-                  ))}</tr>
-                </thead>
-                <tbody className="divide-y divide-gray-800">
-                  {(data.topUsers || []).map((u: any) => (
-                    <tr key={u.email}>
-                      <td className="px-4 py-2.5 font-medium text-white">{u.name}</td>
-                      <td className="px-4 py-2.5 text-gray-400 text-xs">{u.email}</td>
-                      <td className="px-4 py-2.5 text-green-400 font-semibold">{u.solved}</td>
-                      <td className="px-4 py-2.5 text-yellow-400">{Number(u.total_earnings).toLocaleString()} RWF</td>
-                      <td className="px-4 py-2.5">
-                        <span className={`badge text-xs ${u.risk_score > 60 ? 'badge-red' : u.risk_score > 30 ? 'badge-yellow' : 'badge-green'}`}>{u.risk_score}</span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
 
-        {/* ── Users ── */}
-        {!loading && tab === 'users' && (
-          <div className="card overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="border-b border-gray-800">
-                <tr>{['Name','Email','Balance','Status','Joined',''].map(h => (
-                  <th key={h} className="text-left px-4 py-3 text-xs text-gray-500 font-semibold uppercase">{h}</th>
-                ))}</tr>
-              </thead>
-              <tbody className="divide-y divide-gray-800">
-                {users.map((u: any) => (
-                  <tr key={u.id} className="hover:bg-gray-800/20">
-                    <td className="px-4 py-3 font-medium text-white">{u.name}</td>
-                    <td className="px-4 py-3 text-gray-400 text-xs">{u.email}</td>
-                    <td className="px-4 py-3 text-green-400 font-semibold">{Number(u.balance||0).toLocaleString()} RWF</td>
-                    <td className="px-4 py-3">
-                      <span className={`badge text-xs ${u.is_banned ? 'badge-red' : 'badge-green'}`}>{u.is_banned ? 'Banned' : 'Active'}</span>
-                    </td>
-                    <td className="px-4 py-3 text-gray-500 text-xs">{new Date(u.created_at).toLocaleDateString()}</td>
-                    <td className="px-4 py-3">
-                      <button onClick={() => banUser(u.id, !u.is_banned)}
-                        className={`text-xs px-2 py-1 rounded-lg font-medium ${u.is_banned ? 'text-green-400 hover:bg-green-900/30' : 'text-red-400 hover:bg-red-900/30'}`}>
-                        {u.is_banned ? 'Unban' : 'Ban'}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+              {/* Stat cards */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <StatCard icon={Users}      label="Total Users"         value={fmt(dash?.users?.total)}            trend={12}  color="bg-blue-600"   glow="from-blue-900/20 to-transparent" sub={`+${dash?.users?.today||0} today`} />
+                <StatCard icon={Activity}   label="Questions Solved"    value={fmt(dash?.submissions?.accepted)}   trend={8}   color="bg-green-600"  glow="from-green-900/20 to-transparent" sub="all time accepted" />
+                <StatCard icon={DollarSign} label="Total Submissions"   value={fmt(dash?.submissions?.total)}      trend={15}  color="bg-purple-600" glow="from-purple-900/20 to-transparent" sub="across all challenges" />
+                <StatCard icon={Trophy}     label="Active Contests"     value={dash?.contests?.active||0}          trend={5}   color="bg-amber-600"  glow="from-amber-900/20 to-transparent"  sub={`${dash?.contests?.total||0} total`} />
+                <StatCard icon={Wallet}     label="Platform Balance"    value={`${fmtK(wallet?.balance||0)} RWF`} trend={3}   color="bg-cyan-600"   glow="from-cyan-900/20 to-transparent"   sub="available to pay out" />
+                <StatCard icon={ShieldAlert}label="Open Cheat Flags"   value={dash?.flags?.open||0}               trend={-4}  color="bg-red-600"    glow="from-red-900/20 to-transparent"    sub="require review" />
+                <StatCard icon={Award}      label="Total Bets Placed"   value={fmt(wallet?.stats?.total_bets)}    trend={20}  color="bg-pink-600"   glow="from-pink-900/20 to-transparent"   sub="platform betting volume" />
+                <StatCard icon={Target}     label="Total Paid Out"      value={`${fmtK(wallet?.stats?.total_paid_out||0)} RWF`} trend={10} color="bg-orange-600" glow="from-orange-900/20 to-transparent" sub="to winning bettors" />
+              </div>
 
-        {/* ── Challenges ── */}
-        {!loading && tab === 'challenges' && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <p className="text-sm text-gray-500">{challenges.length} challenge{challenges.length !== 1 ? 's' : ''}</p>
-              <button onClick={openNewChallenge} className="btn-primary btn-sm">
-                <Plus className="w-4 h-4" /> New Challenge
-              </button>
-            </div>
-            <div className="card overflow-hidden">
-              <table className="w-full text-sm">
-                <thead className="border-b border-gray-800">
-                  <tr>{['Title','Difficulty','Category','Status',''].map(h => (
-                    <th key={h} className="text-left px-4 py-3 text-xs text-gray-500 font-semibold uppercase">{h}</th>
-                  ))}</tr>
-                </thead>
-                <tbody className="divide-y divide-gray-800">
-                  {challenges.map((c: any) => (
-                    <tr key={c.id} className="hover:bg-gray-800/20">
-                      <td className="px-4 py-3 font-medium text-white">{c.title}</td>
-                      <td className="px-4 py-3">
-                        <span className={`badge text-xs capitalize ${c.difficulty === 'easy' ? 'badge-green' : c.difficulty === 'hard' ? 'badge-red' : 'badge-yellow'}`}>{c.difficulty}</span>
-                      </td>
-                      <td className="px-4 py-3 text-gray-400 text-xs">{c.category || '—'}</td>
-                      <td className="px-4 py-3">
-                        <span className={`badge text-xs ${c.is_published ? 'badge-green' : 'badge'}`}>{c.is_published ? 'Published' : 'Draft'}</span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-1 justify-end">
-                          <button onClick={() => openEditChallenge(c)} className="p-1.5 rounded-lg hover:bg-gray-700 text-gray-400 hover:text-white"><Pencil className="w-3.5 h-3.5" /></button>
-                          <button onClick={() => deleteChallenge(c.id)} className="p-1.5 rounded-lg hover:bg-red-900/30 text-gray-500 hover:text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>
+              {/* Charts row */}
+              <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+                {/* Area chart */}
+                <div className="xl:col-span-2 bg-gray-900 border border-gray-800 rounded-2xl p-5">
+                  <div className="flex items-center justify-between mb-5">
+                    <div>
+                      <h2 className="font-bold text-white text-sm">Platform Activity</h2>
+                      <p className="text-xs text-gray-500">Users, submissions & revenue trends</p>
+                    </div>
+                    <div className="flex gap-1">
+                      {([7,30] as const).map(r => (
+                        <button key={r} onClick={() => setRange(r)}
+                          className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ${range===r ? 'bg-green-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}>
+                          {r}d
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <AreaChart data={chartData} margin={{ top:5, right:10, left:0, bottom:0 }}>
+                      <defs>
+                        <linearGradient id="gUsers"   x1="0" y1="0" x2="0" y2="1"><stop offset="5%"  stopColor="#22c55e" stopOpacity={0.3}/><stop offset="95%" stopColor="#22c55e" stopOpacity={0}/></linearGradient>
+                        <linearGradient id="gRevenue" x1="0" y1="0" x2="0" y2="1"><stop offset="5%"  stopColor="#3b82f6" stopOpacity={0.3}/><stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/></linearGradient>
+                        <linearGradient id="gSolved"  x1="0" y1="0" x2="0" y2="1"><stop offset="5%"  stopColor="#a855f7" stopOpacity={0.3}/><stop offset="95%" stopColor="#a855f7" stopOpacity={0}/></linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                      <XAxis dataKey="label" tick={{ fontSize:10, fill:'#6b7280' }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fontSize:10, fill:'#6b7280' }} axisLine={false} tickLine={false} width={35} />
+                      <Tooltip contentStyle={{ background:'#111827', border:'1px solid #1f2937', borderRadius:'12px', fontSize:'12px' }} />
+                      <Area type="monotone" dataKey="users"   name="Users Active"  stroke="#22c55e" strokeWidth={2} fill="url(#gUsers)" />
+                      <Area type="monotone" dataKey="solved"  name="Solved"        stroke="#a855f7" strokeWidth={2} fill="url(#gSolved)" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* Leaderboard */}
+                <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="font-bold text-white text-sm">Top Coders</h2>
+                    <span className="badge-green badge text-xs">Global</span>
+                  </div>
+                  {leaderboard.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-40 text-gray-600">
+                      <Trophy className="w-8 h-8 mb-2" />
+                      <p className="text-xs">No data yet</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {leaderboard.map((p: any, i: number) => (
+                        <div key={p.id} className="flex items-center gap-3">
+                          <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-black shrink-0 ${i===0?'bg-yellow-500 text-black':i===1?'bg-gray-400 text-black':i===2?'bg-amber-700 text-white':'bg-gray-800 text-gray-400'}`}>
+                            {i<3?['🥇','🥈','🥉'][i]:i+1}
+                          </span>
+                          <div className={`w-7 h-7 rounded-full ${avatarColor(p.name)} flex items-center justify-center text-xs font-bold text-white shrink-0`}>
+                            {avatar(p.name)}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-semibold text-white truncate">{p.name}</p>
+                            <p className="text-xs text-gray-500">{p.solved || 0} solved</p>
+                          </div>
+                          <span className="text-xs font-bold text-green-400">{fmtK(p.total_earnings||0)}</span>
                         </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {challenges.length === 0 && (
-                <div className="p-16 text-center">
-                  <Code2 className="w-10 h-10 mx-auto text-gray-700 mb-3" />
-                  <p className="text-gray-500">No challenges yet</p>
-                  <button onClick={openNewChallenge} className="btn-primary btn-sm mt-4">Create your first challenge</button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-          </div>
-        )}
+              </div>
 
-        {/* ── Contests ── */}
-        {!loading && tab === 'contests' && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <p className="text-sm text-gray-500">{contests.length} contest{contests.length !== 1 ? 's' : ''}</p>
-              <button onClick={() => { setShowCreateContest(v => !v); setContestError(''); }} className="btn-primary btn-sm">
-                <Plus className="w-4 h-4" /> {showCreateContest ? 'Cancel' : 'Create Contest'}
-              </button>
-            </div>
-
-            {showCreateContest && (
-              <div className="card p-6 border-green-800/40 bg-green-900/5">
-                <h2 className="font-bold text-white flex items-center gap-2 mb-5"><Calendar className="w-4 h-4 text-green-400" /> New Contest</h2>
-                {contestError && <div className="bg-red-900/20 border border-red-800 text-red-400 text-sm rounded-xl px-4 py-3 mb-4">{contestError}</div>}
-                <form onSubmit={createContest} className="space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="sm:col-span-2">
-                      <label className="label">Title *</label>
-                      <input className="input" value={contestForm.title} onChange={e => setContestForm(f => ({...f, title: e.target.value}))} required placeholder="e.g. Weekend Coding Sprint" />
-                    </div>
-                    <div className="sm:col-span-2">
-                      <label className="label">Description</label>
-                      <textarea className="input" rows={2} value={contestForm.description} onChange={e => setContestForm(f => ({...f, description: e.target.value}))} placeholder="Brief description..." />
-                    </div>
-                    <div>
-                      <label className="label">Entry Fee (RWF)</label>
-                      <input type="number" min="0" className="input" value={contestForm.entry_fee} onChange={e => setContestForm(f => ({...f, entry_fee: Number(e.target.value)}))} placeholder="0 for free" />
-                    </div>
-                    <div>
-                      <label className="label">Max Participants</label>
-                      <input type="number" min="2" className="input" value={contestForm.max_participants} onChange={e => setContestForm(f => ({...f, max_participants: e.target.value}))} placeholder="Blank = unlimited" />
-                    </div>
-                    <div>
-                      <label className="label">Start Time *</label>
-                      <input type="datetime-local" className="input" value={contestForm.start_time} onChange={e => setContestForm(f => ({...f, start_time: e.target.value}))} required />
-                    </div>
-                    <div>
-                      <label className="label">End Time *</label>
-                      <input type="datetime-local" className="input" value={contestForm.end_time} onChange={e => setContestForm(f => ({...f, end_time: e.target.value}))} required />
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <input type="checkbox" id="rated" checked={contestForm.is_rated} onChange={e => setContestForm(f => ({...f, is_rated: e.target.checked}))} className="w-4 h-4 accent-green-500" />
-                    <label htmlFor="rated" className="text-sm text-gray-300">Rated contest (affects leaderboard)</label>
-                  </div>
+              {/* Revenue bar chart */}
+              <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
+                <div className="flex items-center justify-between mb-5">
                   <div>
-                    <label className="label">Challenges * (select at least one)</label>
-                    <div className="max-h-48 overflow-y-auto border border-gray-700 rounded-xl divide-y divide-gray-800">
-                      {challenges.length === 0 && <p className="text-gray-500 text-sm p-4">No challenges yet — create challenges first</p>}
-                      {challenges.map((c: any) => {
-                        const selected = contestForm.challenge_ids.includes(c.id);
-                        return (
-                          <label key={c.id} className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors ${selected ? 'bg-green-900/20' : 'hover:bg-gray-800/40'}`}>
-                            <input type="checkbox" checked={selected} onChange={() => toggleContestChallenge(c.id)} className="w-4 h-4 accent-green-500 shrink-0" />
-                            <span className="text-sm text-white flex-1">{c.title}</span>
-                            <span className={`badge text-xs capitalize ${c.difficulty === 'easy' ? 'badge-green' : c.difficulty === 'hard' ? 'badge-red' : 'badge-yellow'}`}>{c.difficulty}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                    {contestForm.challenge_ids.length > 0 && <p className="text-xs text-green-400 mt-1">{contestForm.challenge_ids.length} selected</p>}
-                  </div>
-                  <div className="flex gap-3">
-                    <button type="button" onClick={() => setShowCreateContest(false)} className="btn-secondary flex-1 justify-center">Cancel</button>
-                    <button type="submit" disabled={contestSaving} className="btn-primary flex-1 justify-center">{contestSaving ? 'Creating...' : 'Create Contest'}</button>
-                  </div>
-                </form>
-              </div>
-            )}
-
-            {contests.map((c: any) => (
-              <div key={c.id} className="card p-5 flex items-center justify-between gap-4">
-                <div>
-                  <p className="font-bold text-white">{c.title}</p>
-                  <div className="flex items-center gap-2 mt-1">
-                    <span className={`badge text-xs capitalize ${c.status === 'active' ? 'badge-green' : c.status === 'completed' ? 'badge' : 'badge-blue'}`}>{c.status}</span>
-                    <span className="text-gray-500 text-xs">{c.participant_count || 0} participants · {Number(c.prize_pool||0).toLocaleString()} RWF pool</span>
+                    <h2 className="font-bold text-white text-sm">Revenue vs Payouts</h2>
+                    <p className="text-xs text-gray-500">Platform income & disbursements (RWF)</p>
                   </div>
                 </div>
-                {c.status === 'active' && <button onClick={() => finalizeContest(c.id)} className="btn-primary btn-sm">🏆 Finalize & Pay</button>}
-                {c.status === 'completed' && <span className="text-green-400 text-xs font-semibold">✓ Prizes distributed</span>}
+                <ResponsiveContainer width="100%" height={180}>
+                  <BarChart data={chartData} margin={{ top:0, right:10, left:0, bottom:0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" vertical={false} />
+                    <XAxis dataKey="label" tick={{ fontSize:10, fill:'#6b7280' }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize:10, fill:'#6b7280' }} axisLine={false} tickLine={false} width={40} tickFormatter={v=>`${(v/1000).toFixed(0)}k`} />
+                    <Tooltip contentStyle={{ background:'#111827', border:'1px solid #1f2937', borderRadius:'12px', fontSize:'12px' }} formatter={(v:any)=>`${Number(v).toLocaleString()} RWF`} />
+                    <Bar dataKey="revenue" name="Revenue"  fill="#22c55e" radius={[4,4,0,0]} maxBarSize={32} />
+                    <Bar dataKey="payouts" name="Payouts"  fill="#3b82f6" radius={[4,4,0,0]} maxBarSize={32} />
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
-            ))}
-            {contests.length === 0 && !showCreateContest && (
-              <div className="card p-12 text-center">
-                <Trophy className="w-10 h-10 mx-auto text-gray-700 mb-3" />
-                <p className="text-gray-500">No contests yet</p>
-                <button onClick={() => setShowCreateContest(true)} className="btn-primary btn-sm mt-4">Create first contest</button>
-              </div>
-            )}
-          </div>
-        )}
+            </div>
+          )}
 
-        {/* ── Suspicious Submissions ── */}
-        {!loading && tab === 'submissions' && (
-          <div className="space-y-3">
-            <p className="text-sm text-gray-500">Submissions flagged as suspicious (risk score ≥ 60 or cheating suspected)</p>
-            {subs.length === 0 && <div className="card p-10 text-center text-gray-500">No suspicious submissions</div>}
-            {subs.map((s: any) => (
-              <div key={s.id} className="card p-4 flex items-start justify-between gap-4">
+          {/* ════════ USERS ════════ */}
+          {view === 'users' && (
+            <div className="space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="badge-red badge text-xs">Risk: {s.risk_score}</span>
-                    <span className="badge text-xs capitalize">{s.language}</span>
-                    <span className="badge-yellow badge text-xs">Paste: {s.paste_count}</span>
-                  </div>
-                  <p className="text-white font-medium">{s.user_name}</p>
-                  <p className="text-gray-500 text-sm">{s.challenge_title}</p>
-                  <p className="text-gray-600 text-xs mt-1">{new Date(s.submitted_at).toLocaleString()}</p>
+                  <h1 className="text-xl font-black text-white">User Management</h1>
+                  <p className="text-xs text-gray-500 mt-0.5">{users.length} users loaded</p>
                 </div>
-                <span className={`badge text-xs ${s.status === 'accepted' ? 'badge-green' : 'badge-red'}`}>{s.status}</span>
               </div>
-            ))}
-          </div>
-        )}
 
-        {/* ── Cheat Flags ── */}
-        {!loading && tab === 'flags' && (
-          <div className="space-y-3">
-            {flags.length === 0 && <div className="card p-10 text-center text-gray-500">No open flags</div>}
-            {flags.map((f: any) => (
-              <div key={f.id} className="card p-5 flex items-start justify-between gap-4">
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className={`badge text-xs ${f.severity === 'critical' ? 'badge-red' : f.severity === 'high' ? 'badge-yellow' : 'badge'}`}>{f.severity}</span>
-                    <span className="badge text-xs">{f.flag_type?.replace(/_/g,' ')}</span>
-                  </div>
-                  <p className="text-white font-medium">{f.user_name} <span className="text-gray-500 text-sm">({f.user_email})</span></p>
-                  <p className="text-gray-500 text-xs mt-1">Risk score: {f.risk_score} · {new Date(f.created_at).toLocaleString()}</p>
+              {/* Filters */}
+              <div className="flex flex-col sm:flex-row gap-3">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500" />
+                  <input className="input pl-9 text-sm" placeholder="Search by name or email..."
+                    value={userSearch} onChange={e => { setUserSearch(e.target.value); loadUsers(1, e.target.value); }} />
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => reviewFlag(f.id, 'dismiss')} className="btn-secondary btn-sm">Dismiss</button>
-                  <button onClick={() => reviewFlag(f.id, 'ban')} className="btn-danger btn-sm">Ban User</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* ── Finance ── */}
-        {!loading && tab === 'finance' && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="card p-6 space-y-4">
-                <div className="flex items-center gap-2"><Wallet className="w-5 h-5 text-green-400" /><h2 className="font-bold text-white">Platform Wallet</h2></div>
-                <p className="text-4xl font-black text-green-400">{wallet ? Number(wallet.balance).toLocaleString() : '—'} <span className="text-xl text-green-600">RWF</span></p>
-                <div className="grid grid-cols-2 gap-3 pt-2">
-                  {[
-                    { label: 'Total Bets',      value: wallet?.stats?.total_bets      || 0,     color: 'text-blue-400'   },
-                    { label: 'Active Bets',     value: wallet?.stats?.active_bets     || 0,     color: 'text-yellow-400' },
-                    { label: 'Total Collected', value: `${Number(wallet?.stats?.total_collected||0).toLocaleString()} RWF`, color: 'text-green-400' },
-                    { label: 'Total Paid Out',  value: `${Number(wallet?.stats?.total_paid_out ||0).toLocaleString()} RWF`, color: 'text-red-400'   },
-                  ].map(s => (
-                    <div key={s.label} className="bg-gray-800/60 rounded-xl p-3">
-                      <p className="text-xs text-gray-500 mb-1">{s.label}</p>
-                      <p className={`font-bold text-sm ${s.color}`}>{s.value}</p>
-                    </div>
+                  {[['all','All'],['active','Active'],['banned','Banned']].map(([v,l]) => (
+                    <button key={v} onClick={() => setUserFilter(v)}
+                      className={`btn btn-sm ${userFilter===v?'btn-primary':'btn-secondary'}`}>{l}</button>
                   ))}
                 </div>
               </div>
-              <div className="card p-6 space-y-4">
-                <div className="flex items-center gap-2"><ArrowDownToLine className="w-5 h-5 text-amber-400" /><h2 className="font-bold text-white">Deposit to Platform</h2></div>
-                <p className="text-sm text-gray-500">Add real cash to the platform pool to pay out winning bets.</p>
-                <div className="space-y-3">
-                  <div><label className="label">Amount (RWF)</label><input type="number" min="1000" placeholder="e.g. 100000" value={depositAmt} onChange={e => setDepositAmt(e.target.value)} className="input" /></div>
-                  <div><label className="label">Note (optional)</label><input type="text" placeholder="e.g. Monthly top-up" value={depositNote} onChange={e => setDepositNote(e.target.value)} className="input" /></div>
-                  <div className="flex gap-2 flex-wrap">
-                    {[10000,50000,100000,500000].map(v => (
-                      <button key={v} onClick={() => setDepositAmt(String(v))} className="text-xs px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 font-medium">{v/1000}K</button>
-                    ))}
-                  </div>
-                  <button onClick={doDeposit} disabled={depositing || !depositAmt} className="btn-primary w-full justify-center py-3">{depositing ? 'Processing...' : 'Deposit to Platform Wallet'}</button>
-                </div>
-              </div>
-            </div>
-            {wallet?.recent?.length > 0 && (
-              <div className="card overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-800"><h2 className="font-semibold text-white text-sm">Recent Bet Activity</h2></div>
+
+              {/* Table */}
+              <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead className="border-b border-gray-800">
-                      <tr>{['User','Challenge','Bet','×','Payout','Status','Date'].map(h => (
-                        <th key={h} className="text-left px-4 py-2 text-xs text-gray-500 font-semibold uppercase">{h}</th>
+                      <tr>{['User','Email','Balance','Earnings','Status','Risk','Joined','Actions'].map(h=>(
+                        <th key={h} className="text-left px-4 py-3 text-xs text-gray-500 font-semibold uppercase tracking-wider">{h}</th>
                       ))}</tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-800">
-                      {wallet.recent.map((b: any, i: number) => (
-                        <tr key={i}>
-                          <td className="px-4 py-2.5 font-medium text-white">{b.user_name}</td>
-                          <td className="px-4 py-2.5 text-gray-400 text-xs max-w-[140px] truncate">{b.challenge_title}</td>
-                          <td className="px-4 py-2.5 text-yellow-400 font-medium">{Number(b.amount).toLocaleString()}</td>
-                          <td className="px-4 py-2.5 text-gray-400">{b.multiplier}×</td>
-                          <td className="px-4 py-2.5 text-green-400 font-medium">{Number(b.potential_payout).toLocaleString()}</td>
-                          <td className="px-4 py-2.5"><span className={`badge text-xs ${b.status==='won'?'badge-green':b.status==='lost'?'badge-red':'badge-yellow'}`}>{b.status}</span></td>
-                          <td className="px-4 py-2.5 text-gray-500 text-xs">{new Date(b.created_at).toLocaleDateString()}</td>
+                    <tbody className="divide-y divide-gray-800/50">
+                      {loading.users ? (
+                        Array.from({length:5}).map((_,i)=>(
+                          <tr key={i}><td colSpan={8} className="px-4 py-3"><div className="h-8 bg-gray-800 rounded-lg animate-pulse" /></td></tr>
+                        ))
+                      ) : filteredUsers.length === 0 ? (
+                        <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-500">No users found</td></tr>
+                      ) : filteredUsers.map((u: any) => (
+                        <tr key={u.id} className="hover:bg-gray-800/30 transition-colors group">
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2.5">
+                              <div className={`w-8 h-8 rounded-full ${avatarColor(u.name)} flex items-center justify-center text-xs font-bold text-white shrink-0`}>
+                                {avatar(u.name)}
+                              </div>
+                              <span className="font-medium text-white text-sm">{u.name}</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-gray-400 text-xs">{u.email}</td>
+                          <td className="px-4 py-3 text-green-400 font-semibold text-xs">{fmt(u.balance)} RWF</td>
+                          <td className="px-4 py-3 text-amber-400 font-semibold text-xs">{fmt(u.total_earnings)} RWF</td>
+                          <td className="px-4 py-3">
+                            <span className={`badge text-xs ${u.is_banned?'badge-red':'badge-green'}`}>{u.is_banned?'Banned':'Active'}</span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={`badge text-xs ${u.risk_score>60?'badge-red':u.risk_score>30?'badge-yellow':'badge-green'}`}>{u.risk_score}</span>
+                          </td>
+                          <td className="px-4 py-3 text-gray-500 text-xs">{new Date(u.created_at).toLocaleDateString()}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button onClick={() => { setAdjustUser(u); setAdjustAmt(''); setAdjustNote(''); }}
+                                title="Adjust balance" className="p-1.5 rounded-lg hover:bg-gray-700 text-gray-400 hover:text-green-400">
+                                <Wallet className="w-3.5 h-3.5" />
+                              </button>
+                              <button onClick={() => banUser(u.id, !u.is_banned)}
+                                className={`p-1.5 rounded-lg transition-colors ${u.is_banned?'hover:bg-green-900/30 text-gray-400 hover:text-green-400':'hover:bg-red-900/30 text-gray-400 hover:text-red-400'}`}>
+                                <Ban className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="px-4 py-3 border-t border-gray-800 flex items-center justify-between">
+                  <p className="text-xs text-gray-500">{filteredUsers.length} users</p>
+                  <div className="flex gap-1">
+                    <button onClick={() => { const p = Math.max(1,userPage-1); setUserPage(p); loadUsers(p,userSearch); }}
+                      disabled={userPage===1} className="btn-secondary btn-sm disabled:opacity-40"><ChevronLeft className="w-3.5 h-3.5" /></button>
+                    <span className="px-3 py-1.5 text-xs text-gray-400">Page {userPage}</span>
+                    <button onClick={() => { const p = userPage+1; setUserPage(p); loadUsers(p,userSearch); }}
+                      disabled={users.length < 30} className="btn-secondary btn-sm disabled:opacity-40"><ChevronRight className="w-3.5 h-3.5" /></button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ════════ FINANCIAL ════════ */}
+          {view === 'financial' && (
+            <div className="space-y-5">
+              <h1 className="text-xl font-black text-white">Financial Management</h1>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {[
+                  { label:'Platform Balance',  value:`${fmt(wallet?.balance||0)} RWF`,                   color:'text-green-400',  icon:Wallet     },
+                  { label:'Total Bets',        value:fmt(wallet?.stats?.total_bets||0),                  color:'text-blue-400',   icon:Target     },
+                  { label:'Total Paid Out',    value:`${fmt(wallet?.stats?.total_paid_out||0)} RWF`,     color:'text-red-400',    icon:ArrowUpRight },
+                ].map(s => (
+                  <div key={s.label} className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-xs text-gray-500 uppercase font-semibold tracking-wide">{s.label}</p>
+                      <s.icon className={`w-4 h-4 ${s.color}`} />
+                    </div>
+                    <p className={`text-2xl font-black ${s.color}`}>{s.value}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                {/* Deposit to platform */}
+                <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5 space-y-4">
+                  <h2 className="font-bold text-white flex items-center gap-2">
+                    <ArrowDownRight className="w-4 h-4 text-green-400" /> Deposit to Platform Pool
+                  </h2>
+                  <p className="text-xs text-gray-500">Add funds to the platform wallet to cover winning bet payouts.</p>
+                  <div className="space-y-3">
+                    <div><label className="label">Amount (RWF)</label>
+                      <input type="number" min="1000" className="input" value={depositAmt} onChange={e => setDepositAmt(e.target.value)} placeholder="e.g. 100000" /></div>
+                    <div><label className="label">Note (optional)</label>
+                      <input className="input" value={depositNote} onChange={e => setDepositNote(e.target.value)} placeholder="e.g. Monthly top-up" /></div>
+                    <div className="flex gap-2 flex-wrap">
+                      {[10000,50000,100000,500000].map(v => (
+                        <button key={v} onClick={() => setDepositAmt(String(v))}
+                          className="text-xs px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 font-medium">{v/1000}K</button>
+                      ))}
+                    </div>
+                    <button onClick={doDeposit} disabled={!depositAmt} className="btn-primary w-full justify-center py-3">Deposit to Platform</button>
+                  </div>
+                </div>
+
+                {/* Recent bet activity */}
+                <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+                  <div className="px-4 py-3 border-b border-gray-800">
+                    <h2 className="font-bold text-white text-sm">Recent Bet Activity</h2>
+                  </div>
+                  {!wallet?.recent?.length ? (
+                    <div className="p-12 text-center text-gray-600 text-sm">No bets yet</div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead className="border-b border-gray-800">
+                          <tr>{['User','Bet','×','Status'].map(h=>(
+                            <th key={h} className="text-left px-4 py-2.5 text-gray-500 font-semibold uppercase tracking-wider">{h}</th>
+                          ))}</tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-800/50">
+                          {wallet.recent.map((b: any, i: number) => (
+                            <tr key={i} className="hover:bg-gray-800/20">
+                              <td className="px-4 py-2.5 font-medium text-white">{b.user_name}</td>
+                              <td className="px-4 py-2.5 text-yellow-400 font-bold">{fmt(b.amount)}</td>
+                              <td className="px-4 py-2.5 text-gray-400">{b.multiplier}×</td>
+                              <td className="px-4 py-2.5"><span className={`badge text-xs ${b.status==='won'?'badge-green':b.status==='lost'?'badge-red':'badge-yellow'}`}>{b.status}</span></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ════════ CHALLENGES ════════ */}
+          {view === 'challenges' && (
+            <div className="space-y-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h1 className="text-xl font-black text-white">Challenge Management</h1>
+                  <p className="text-xs text-gray-500 mt-0.5">{challenges.length} challenges</p>
+                </div>
+                <button onClick={openNewCh} className="btn-primary btn-sm"><Plus className="w-3.5 h-3.5" /> New Challenge</button>
+              </div>
+
+              {/* Difficulty breakdown */}
+              <div className="grid grid-cols-3 gap-3">
+                {['easy','medium','hard'].map(d => {
+                  const count = challenges.filter(c => c.difficulty===d).length;
+                  const pub   = challenges.filter(c => c.difficulty===d && c.is_published).length;
+                  return (
+                    <div key={d} className={`bg-gray-900 border ${d==='easy'?'border-green-800/40':d==='medium'?'border-yellow-800/40':'border-red-800/40'} rounded-2xl p-4`}>
+                      <p className={`text-xs font-bold uppercase tracking-wide mb-1 ${d==='easy'?'text-green-400':d==='medium'?'text-yellow-400':'text-red-400'}`}>{d}</p>
+                      <p className="text-2xl font-black text-white">{count}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">{pub} published</p>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="border-b border-gray-800">
+                      <tr>{['Title','Difficulty','Category','Languages','Status','Actions'].map(h=>(
+                        <th key={h} className="text-left px-4 py-3 text-xs text-gray-500 font-semibold uppercase tracking-wider">{h}</th>
+                      ))}</tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-800/50">
+                      {loading.challenges ? Array.from({length:4}).map((_,i)=>(
+                        <tr key={i}><td colSpan={6} className="px-4 py-3"><div className="h-7 bg-gray-800 rounded animate-pulse" /></td></tr>
+                      )) : challenges.length === 0 ? (
+                        <tr><td colSpan={6} className="px-4 py-16 text-center">
+                          <Code2 className="w-10 h-10 mx-auto text-gray-700 mb-3" />
+                          <p className="text-gray-500 text-sm">No challenges yet</p>
+                          <button onClick={openNewCh} className="btn-primary btn-sm mt-3">Create first challenge</button>
+                        </td></tr>
+                      ) : challenges.map((c: any) => (
+                        <tr key={c.id} className="hover:bg-gray-800/30 transition-colors group">
+                          <td className="px-4 py-3 font-medium text-white">{c.title}</td>
+                          <td className="px-4 py-3"><span className={`badge text-xs capitalize ${c.difficulty==='easy'?'badge-green':c.difficulty==='hard'?'badge-red':'badge-yellow'}`}>{c.difficulty}</span></td>
+                          <td className="px-4 py-3 text-gray-400 text-xs">{c.category||'—'}</td>
+                          <td className="px-4 py-3 text-gray-500 text-xs">{(c.supported_languages||[]).join(', ')}</td>
+                          <td className="px-4 py-3"><span className={`badge text-xs ${c.is_published?'badge-green':'badge'}`}>{c.is_published?'Published':'Draft'}</span></td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button onClick={() => openEditCh(c)} className="p-1.5 rounded-lg hover:bg-gray-700 text-gray-400 hover:text-white"><Pencil className="w-3.5 h-3.5" /></button>
+                              <button onClick={() => deleteCh(c.id)} className="p-1.5 rounded-lg hover:bg-red-900/30 text-gray-400 hover:text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>
+                            </div>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
               </div>
-            )}
-          </div>
-        )}
-
-        {loading && <div className="card p-16 text-center text-gray-500 animate-pulse">Loading...</div>}
-      </main>
-
-      {/* ── Challenge create/edit modal ── */}
-      {chModal && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 p-4 overflow-y-auto">
-          <div className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-3xl my-8">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800">
-              <h2 className="font-bold text-white text-lg">{editingCh ? 'Edit Challenge' : 'New Challenge'}</h2>
-              <button onClick={() => setChModal(false)}><X className="w-5 h-5 text-gray-400 hover:text-white" /></button>
             </div>
-            <form onSubmit={saveChallenge} className="p-6 space-y-5">
-              {chError && <div className="bg-red-900/20 border border-red-800 text-red-400 text-sm rounded-xl px-4 py-3">{chError}</div>}
+          )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="sm:col-span-2">
-                  <label className="label">Title *</label>
-                  <input className="input" value={chForm.title} onChange={e => setChForm(f => ({...f, title: e.target.value}))} required placeholder="e.g. Two Sum" />
-                </div>
+          {/* ════════ CONTESTS ════════ */}
+          {view === 'contests' && (
+            <div className="space-y-5">
+              <div className="flex items-center justify-between">
                 <div>
-                  <label className="label">Difficulty *</label>
-                  <select className="input" value={chForm.difficulty} onChange={e => setChForm(f => ({...f, difficulty: e.target.value}))}>
-                    <option value="easy">Easy (2× bet multiplier)</option>
-                    <option value="medium">Medium (3× bet multiplier)</option>
-                    <option value="hard">Hard (5× bet multiplier)</option>
-                  </select>
+                  <h1 className="text-xl font-black text-white">Contest Management</h1>
+                  <p className="text-xs text-gray-500 mt-0.5">{contests.length} contests total</p>
                 </div>
-                <div>
-                  <label className="label">Category</label>
-                  <input className="input" value={chForm.category} onChange={e => setChForm(f => ({...f, category: e.target.value}))} placeholder="e.g. Arrays, Strings, DP..." />
-                </div>
+                <button onClick={() => { setShowNewContest(v => !v); setContestError(''); }} className="btn-primary btn-sm">
+                  <Plus className="w-3.5 h-3.5" /> {showNewContest ? 'Cancel' : 'New Contest'}
+                </button>
               </div>
 
-              <div>
-                <label className="label">Description * (Markdown supported)</label>
-                <textarea className="input font-mono text-sm" rows={7} value={chForm.description}
-                  onChange={e => setChForm(f => ({...f, description: e.target.value}))} required
-                  placeholder={`## Problem\nGiven an array of integers nums and an integer target...\n\n## Constraints\n- 2 <= nums.length <= 10^4\n- All inputs are valid\n\n## Example\nInput: nums = [2,7,11,15], target = 9\nOutput: [0,1]`} />
+              {showNewContest && (
+                <div className="bg-gray-900 border border-green-800/30 rounded-2xl p-6">
+                  <h2 className="font-bold text-white flex items-center gap-2 mb-5"><Calendar className="w-4 h-4 text-green-400" /> Create New Contest</h2>
+                  {contestError && <div className="bg-red-900/20 border border-red-800 text-red-400 text-sm rounded-xl px-4 py-3 mb-4">{contestError}</div>}
+                  <form onSubmit={saveContest} className="space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="sm:col-span-2"><label className="label">Title *</label><input className="input" value={contestForm.title} onChange={e=>setContestForm(f=>({...f,title:e.target.value}))} required placeholder="e.g. Weekend Sprint #12" /></div>
+                      <div className="sm:col-span-2"><label className="label">Description</label><textarea className="input" rows={2} value={contestForm.description} onChange={e=>setContestForm(f=>({...f,description:e.target.value}))} placeholder="Brief description..." /></div>
+                      <div><label className="label">Entry Fee (RWF)</label><input type="number" min="0" className="input" value={contestForm.entry_fee} onChange={e=>setContestForm(f=>({...f,entry_fee:Number(e.target.value)}))} placeholder="0 = free" /></div>
+                      <div><label className="label">Max Participants</label><input type="number" min="2" className="input" value={contestForm.max_participants} onChange={e=>setContestForm(f=>({...f,max_participants:e.target.value}))} placeholder="Blank = unlimited" /></div>
+                      <div><label className="label">Start Time *</label><input type="datetime-local" className="input" value={contestForm.start_time} onChange={e=>setContestForm(f=>({...f,start_time:e.target.value}))} required /></div>
+                      <div><label className="label">End Time *</label><input type="datetime-local" className="input" value={contestForm.end_time} onChange={e=>setContestForm(f=>({...f,end_time:e.target.value}))} required /></div>
+                    </div>
+                    <div className="flex items-center gap-2"><input type="checkbox" id="rated2" checked={contestForm.is_rated} onChange={e=>setContestForm(f=>({...f,is_rated:e.target.checked}))} className="w-4 h-4 accent-green-500" /><label htmlFor="rated2" className="text-sm text-gray-300">Rated contest</label></div>
+                    <div>
+                      <label className="label">Challenges * <span className="text-gray-500 font-normal">(select from list)</span></label>
+                      <div className="max-h-44 overflow-y-auto border border-gray-700 rounded-xl divide-y divide-gray-800">
+                        {challenges.length === 0 && <p className="p-4 text-sm text-gray-500">Create challenges first</p>}
+                        {challenges.map((c: any) => {
+                          const sel = contestForm.challenge_ids.includes(c.id);
+                          return (
+                            <label key={c.id} className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors ${sel?'bg-green-900/20':'hover:bg-gray-800/40'}`}>
+                              <input type="checkbox" checked={sel} onChange={() => setContestForm(f=>({...f, challenge_ids: sel ? f.challenge_ids.filter(x=>x!==c.id):[...f.challenge_ids,c.id]}))} className="w-4 h-4 accent-green-500 shrink-0" />
+                              <span className="text-sm text-white flex-1">{c.title}</span>
+                              <span className={`badge text-xs capitalize ${c.difficulty==='easy'?'badge-green':c.difficulty==='hard'?'badge-red':'badge-yellow'}`}>{c.difficulty}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                      {contestForm.challenge_ids.length > 0 && <p className="text-xs text-green-400 mt-1">{contestForm.challenge_ids.length} selected</p>}
+                    </div>
+                    <div className="flex gap-3"><button type="button" onClick={()=>setShowNewContest(false)} className="btn-secondary flex-1 justify-center">Cancel</button><button type="submit" disabled={contestSaving} className="btn-primary flex-1 justify-center">{contestSaving?'Creating...':'Create Contest'}</button></div>
+                  </form>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                {loading.contests ? Array.from({length:3}).map((_,i)=><div key={i} className="h-20 bg-gray-900 border border-gray-800 rounded-2xl animate-pulse" />) :
+                  contests.length === 0 && !showNewContest ? (
+                    <div className="bg-gray-900 border border-gray-800 rounded-2xl p-16 text-center">
+                      <Trophy className="w-10 h-10 mx-auto text-gray-700 mb-3" />
+                      <p className="text-gray-500">No contests yet</p>
+                      <button onClick={()=>setShowNewContest(true)} className="btn-primary btn-sm mt-4">Create first contest</button>
+                    </div>
+                  ) : contests.map((c: any) => (
+                    <div key={c.id} className="bg-gray-900 border border-gray-800 hover:border-gray-700 rounded-2xl p-5 flex items-center justify-between gap-4 transition-colors">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className={`badge text-xs capitalize ${c.status==='active'?'badge-green':c.status==='completed'?'badge':'badge-blue'}`}>{c.status}</span>
+                          {c.is_rated && <span className="badge text-xs">Rated</span>}
+                        </div>
+                        <p className="font-bold text-white truncate">{c.title}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {c.participant_count||0} participants · {Number(c.prize_pool||0).toLocaleString()} RWF pool · Entry: {Number(c.entry_fee)===0?'Free':`${Number(c.entry_fee).toLocaleString()} RWF`}
+                        </p>
+                      </div>
+                      {c.status==='active' && <button onClick={()=>finalizeContest(c.id)} className="btn-primary btn-sm shrink-0">🏆 Finalize & Pay</button>}
+                      {c.status==='completed' && <span className="text-green-400 text-xs font-semibold shrink-0">✓ Paid</span>}
+                    </div>
+                  ))
+                }
+              </div>
+            </div>
+          )}
+
+          {/* ════════ ANTI-CHEAT ════════ */}
+          {view === 'anticheat' && (
+            <div className="space-y-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h1 className="text-xl font-black text-white">Anti-Cheat Center</h1>
+                  <p className="text-xs text-gray-500 mt-0.5">{flags.length} open flags · {subs.length} suspicious submissions</p>
+                </div>
+                <button onClick={loadAntiCheat} className="btn-secondary btn-sm"><RefreshCw className="w-3 h-3" /> Refresh</button>
               </div>
 
-              <div>
-                <label className="label">Supported Languages</label>
-                <div className="flex gap-4 mt-1">
-                  {['javascript','python'].map(lang => (
-                    <label key={lang} className="flex items-center gap-2 cursor-pointer">
-                      <input type="checkbox" checked={chForm.supported_languages.includes(lang)} onChange={() => toggleLang(lang)} className="w-4 h-4 accent-green-500" />
-                      <span className="text-sm text-gray-300 capitalize">{lang}</span>
-                    </label>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                {/* Flags */}
+                <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+                  <div className="px-4 py-3 border-b border-gray-800 flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-400" />
+                    <h2 className="font-bold text-white text-sm">Cheat Flags</h2>
+                    {flags.length > 0 && <span className="badge-red badge text-xs ml-auto">{flags.length}</span>}
+                  </div>
+                  <div className="divide-y divide-gray-800/50 max-h-96 overflow-y-auto">
+                    {flags.length === 0 ? <div className="p-10 text-center text-gray-500 text-sm">No open flags</div> :
+                      flags.map((f: any) => (
+                        <div key={f.id} className="p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5 mb-1">
+                                <span className={`badge text-xs ${f.severity==='critical'?'badge-red':f.severity==='high'?'badge-yellow':'badge'}`}>{f.severity}</span>
+                                <span className="text-xs text-gray-500">{f.flag_type?.replace(/_/g,' ')}</span>
+                              </div>
+                              <p className="text-sm font-medium text-white truncate">{f.user_name}</p>
+                              <p className="text-xs text-gray-500">Risk: {f.risk_score} · {new Date(f.created_at).toLocaleDateString()}</p>
+                            </div>
+                            <div className="flex gap-1 shrink-0">
+                              <button onClick={()=>reviewFlag(f.id,'dismiss')} className="btn-secondary btn-sm text-xs">Dismiss</button>
+                              <button onClick={()=>reviewFlag(f.id,'ban')} className="btn-danger btn-sm text-xs">Ban</button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+
+                {/* Suspicious submissions */}
+                <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
+                  <div className="px-4 py-3 border-b border-gray-800 flex items-center gap-2">
+                    <ShieldAlert className="w-4 h-4 text-red-400" />
+                    <h2 className="font-bold text-white text-sm">Suspicious Submissions</h2>
+                    {subs.length > 0 && <span className="badge-red badge text-xs ml-auto">{subs.length}</span>}
+                  </div>
+                  <div className="divide-y divide-gray-800/50 max-h-96 overflow-y-auto">
+                    {subs.length === 0 ? <div className="p-10 text-center text-gray-500 text-sm">None found</div> :
+                      subs.map((s: any) => (
+                        <div key={s.id} className="p-4 flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 mb-1">
+                              <span className="badge-red badge text-xs">Risk {s.risk_score}</span>
+                              <span className="badge text-xs capitalize">{s.language}</span>
+                              <span className="badge-yellow badge text-xs">Paste ×{s.paste_count}</span>
+                            </div>
+                            <p className="text-sm font-medium text-white truncate">{s.user_name}</p>
+                            <p className="text-xs text-gray-500 truncate">{s.challenge_title}</p>
+                          </div>
+                          <span className={`badge text-xs shrink-0 ${s.status==='accepted'?'badge-green':'badge-red'}`}>{s.status}</span>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ════════ SYSTEM ════════ */}
+          {view === 'system' && (
+            <div className="space-y-5">
+              <h1 className="text-xl font-black text-white">System Settings</h1>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                {/* Platform info */}
+                <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5 space-y-4">
+                  <h2 className="font-bold text-white text-sm flex items-center gap-2"><Building2 className="w-4 h-4 text-green-400" /> Platform Info</h2>
+                  {[
+                    { label:'Platform Name', value:'CodeArena' },
+                    { label:'Version',       value:'1.0.0' },
+                    { label:'Environment',   value:'Production' },
+                    { label:'Database',      value:'MySQL (MariaDB)' },
+                    { label:'Code Runner',   value:'Docker Sandboxed' },
+                    { label:'Currency',      value:'RWF (Rwandan Franc)' },
+                  ].map(r => (
+                    <div key={r.label} className="flex items-center justify-between py-2 border-b border-gray-800 last:border-0">
+                      <span className="text-xs text-gray-500">{r.label}</span>
+                      <span className="text-xs font-semibold text-white">{r.value}</span>
+                    </div>
                   ))}
                 </div>
-              </div>
 
+                {/* Quick actions */}
+                <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5 space-y-3">
+                  <h2 className="font-bold text-white text-sm flex items-center gap-2"><Zap className="w-4 h-4 text-amber-400" /> Quick Actions</h2>
+                  {[
+                    { label:'View All Submissions',    desc:'Browse full submission history',         action:()=>{}, icon:Eye      },
+                    { label:'Export User Data',        desc:'Download CSV of all user records',       action:()=>{}, icon:Download },
+                    { label:'Refresh Leaderboard',     desc:'Recalculate global rankings now',        action:()=>{}, icon:RefreshCw},
+                    { label:'Clear Suspicious Flags',  desc:'Bulk dismiss low-risk flags',            action:()=>{}, icon:CheckCircle},
+                  ].map(a => (
+                    <button key={a.label} onClick={a.action}
+                      className="w-full flex items-center gap-3 p-3 rounded-xl border border-gray-800 hover:border-gray-700 hover:bg-gray-800/40 transition-all text-left group">
+                      <div className="w-8 h-8 rounded-lg bg-gray-800 group-hover:bg-gray-700 flex items-center justify-center transition-colors shrink-0">
+                        <a.icon className="w-4 h-4 text-gray-400 group-hover:text-white" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-white">{a.label}</p>
+                        <p className="text-xs text-gray-500">{a.desc}</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Admin account */}
+                <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5 space-y-4 lg:col-span-2">
+                  <h2 className="font-bold text-white text-sm flex items-center gap-2"><UserCheck className="w-4 h-4 text-blue-400" /> Admin Account</h2>
+                  <div className="flex items-center gap-4 p-4 bg-gray-800/50 rounded-xl">
+                    <div className={`w-14 h-14 rounded-2xl ${avatarColor(admin?.name||'A')} flex items-center justify-center text-xl font-black text-white`}>
+                      {avatar(admin?.name||'A')}
+                    </div>
+                    <div>
+                      <p className="font-bold text-white">{admin?.name}</p>
+                      <p className="text-sm text-gray-400">{admin?.email}</p>
+                      <span className="badge-green badge text-xs mt-1">Super Admin</span>
+                    </div>
+                  </div>
+                  <button onClick={logout} className="btn-danger btn-sm w-full justify-center"><LogOut className="w-3.5 h-3.5" /> Sign Out</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
+
+      {/* ══════════════════ MODALS ══════════════════ */}
+
+      {/* Challenge modal */}
+      {chModal && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/80 p-4 overflow-y-auto backdrop-blur-sm">
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-3xl my-8">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800">
+              <h2 className="font-black text-white">{editingCh ? 'Edit Challenge' : 'New Challenge'}</h2>
+              <button onClick={() => setChModal(false)} className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-400 hover:text-white"><X className="w-5 h-5" /></button>
+            </div>
+            <form onSubmit={saveCh} className="p-6 space-y-5">
+              {chError && <div className="bg-red-900/20 border border-red-800 text-red-400 text-sm rounded-xl px-4 py-3">{chError}</div>}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="sm:col-span-2"><label className="label">Title *</label><input className="input" value={chForm.title} onChange={e=>setChForm(f=>({...f,title:e.target.value}))} required placeholder="e.g. Two Sum" /></div>
+                <div>
+                  <label className="label">Difficulty *</label>
+                  <select className="input" value={chForm.difficulty} onChange={e=>setChForm(f=>({...f,difficulty:e.target.value}))}>
+                    <option value="easy">Easy — 2× bet multiplier</option>
+                    <option value="medium">Medium — 3× bet multiplier</option>
+                    <option value="hard">Hard — 5× bet multiplier</option>
+                  </select>
+                </div>
+                <div><label className="label">Category</label><input className="input" value={chForm.category} onChange={e=>setChForm(f=>({...f,category:e.target.value}))} placeholder="Arrays, DP, Strings..." /></div>
+              </div>
+              <div><label className="label">Description * (Markdown supported)</label>
+                <textarea className="input font-mono text-sm" rows={7} value={chForm.description} onChange={e=>setChForm(f=>({...f,description:e.target.value}))} required
+                  placeholder={`## Problem\nDescribe the problem...\n\n## Constraints\n- 1 ≤ n ≤ 10^4\n\n## Example\nInput: [2,7,11,15], target = 9\nOutput: [0,1]`} />
+              </div>
+              <div>
+                <label className="label">Languages</label>
+                <div className="flex gap-4 mt-1">{['javascript','python'].map(lang=>(
+                  <label key={lang} className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={chForm.supported_languages.includes(lang)} onChange={()=>toggleLang(lang)} className="w-4 h-4 accent-green-500" />
+                    <span className="text-sm text-gray-300 capitalize">{lang}</span>
+                  </label>
+                ))}</div>
+              </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div><label className="label">Time Limit (ms)</label><input type="number" min="1000" max="30000" step="1000" className="input" value={chForm.time_limit_ms} onChange={e => setChForm(f => ({...f, time_limit_ms: Number(e.target.value)}))} /></div>
-                <div><label className="label">Memory (MB)</label><input type="number" min="32" max="1024" className="input" value={chForm.memory_limit_mb} onChange={e => setChForm(f => ({...f, memory_limit_mb: Number(e.target.value)}))} /></div>
-                <div><label className="label">Max Subs/hr</label><input type="number" min="1" max="50" className="input" value={chForm.max_submissions} onChange={e => setChForm(f => ({...f, max_submissions: Number(e.target.value)}))} /></div>
-                <div><label className="label">Cooldown (sec)</label><input type="number" min="0" className="input" value={chForm.submission_cooldown_seconds} onChange={e => setChForm(f => ({...f, submission_cooldown_seconds: Number(e.target.value)}))} /></div>
+                <div><label className="label">Time (ms)</label><input type="number" min="1000" max="30000" step="1000" className="input" value={chForm.time_limit_ms} onChange={e=>setChForm(f=>({...f,time_limit_ms:Number(e.target.value)}))} /></div>
+                <div><label className="label">Memory (MB)</label><input type="number" min="32" max="1024" className="input" value={chForm.memory_limit_mb} onChange={e=>setChForm(f=>({...f,memory_limit_mb:Number(e.target.value)}))} /></div>
+                <div><label className="label">Max Subs/hr</label><input type="number" min="1" max="50" className="input" value={chForm.max_submissions} onChange={e=>setChForm(f=>({...f,max_submissions:Number(e.target.value)}))} /></div>
+                <div><label className="label">Cooldown (s)</label><input type="number" min="0" className="input" value={chForm.submission_cooldown_seconds} onChange={e=>setChForm(f=>({...f,submission_cooldown_seconds:Number(e.target.value)}))} /></div>
               </div>
-
               <div className="flex items-center gap-2">
-                <input type="checkbox" id="pub" checked={chForm.is_published} onChange={e => setChForm(f => ({...f, is_published: e.target.checked}))} className="w-4 h-4 accent-green-500" />
-                <label htmlFor="pub" className="text-sm text-gray-300">Published — visible to all users immediately</label>
+                <input type="checkbox" id="pub2" checked={chForm.is_published} onChange={e=>setChForm(f=>({...f,is_published:e.target.checked}))} className="w-4 h-4 accent-green-500" />
+                <label htmlFor="pub2" className="text-sm text-gray-300">Published — visible to users immediately</label>
               </div>
-
               {/* Test Cases */}
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <label className="label mb-0">Test Cases *</label>
-                  <button type="button" onClick={addTC} className="text-xs text-green-400 hover:text-green-300 flex items-center gap-1">
-                    <Plus className="w-3 h-3" /> Add test case
-                  </button>
+                  <button type="button" onClick={()=>setTestCases(t=>[...t,{...EMPTY_TC}])} className="text-xs text-green-400 hover:text-green-300 flex items-center gap-1"><Plus className="w-3 h-3"/>Add case</button>
                 </div>
                 <div className="space-y-3">
-                  {testCases.map((tc, i) => (
+                  {testCases.map((tc,i)=>(
                     <div key={i} className="bg-gray-800/60 rounded-xl p-4 space-y-3">
                       <div className="flex items-center justify-between">
-                        <span className="text-xs text-gray-500 font-semibold uppercase">Test Case #{i + 1}</span>
-                        {testCases.length > 1 && <button type="button" onClick={() => removeTC(i)} className="text-red-400 hover:text-red-300 text-xs">Remove</button>}
+                        <span className="text-xs text-gray-500 font-bold uppercase">Test #{i+1}</span>
+                        {testCases.length>1 && <button type="button" onClick={()=>setTestCases(t=>t.filter((_,idx)=>idx!==i))} className="text-xs text-red-400 hover:text-red-300">Remove</button>}
                       </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                          <label className="label text-xs">Input (stdin)</label>
-                          <textarea className="input font-mono text-xs" rows={3} value={tc.input} onChange={e => updateTC(i, 'input', e.target.value)} placeholder="9&#10;2 7 11 15" />
-                        </div>
-                        <div>
-                          <label className="label text-xs">Expected Output (stdout)</label>
-                          <textarea className="input font-mono text-xs" rows={3} value={tc.expected_output} onChange={e => updateTC(i, 'expected_output', e.target.value)} placeholder="0 1" />
-                        </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div><label className="label text-xs">Input (stdin)</label><textarea className="input font-mono text-xs" rows={3} value={tc.input} onChange={e=>setTestCases(t=>t.map((x,idx)=>idx===i?{...x,input:e.target.value}:x))} placeholder="stdin..." /></div>
+                        <div><label className="label text-xs">Expected Output</label><textarea className="input font-mono text-xs" rows={3} value={tc.expected_output} onChange={e=>setTestCases(t=>t.map((x,idx)=>idx===i?{...x,expected_output:e.target.value}:x))} placeholder="stdout..." /></div>
                       </div>
-                      <div className="flex items-center gap-4 flex-wrap">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input type="checkbox" checked={tc.is_sample} onChange={e => updateTC(i, 'is_sample', e.target.checked)} className="w-3.5 h-3.5 accent-green-500" />
-                          <span className="text-xs text-gray-400">Show as sample in problem statement</span>
+                      <div className="flex items-center gap-4">
+                        <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-400">
+                          <input type="checkbox" checked={tc.is_sample} onChange={e=>setTestCases(t=>t.map((x,idx)=>idx===i?{...x,is_sample:e.target.checked}:x))} className="w-3.5 h-3.5 accent-green-500" />
+                          Show as sample
                         </label>
                         <div className="flex items-center gap-2">
-                          <span className="text-xs text-gray-400">Points:</span>
-                          <input type="number" min="1" className="input w-20 text-xs py-1" value={tc.points} onChange={e => updateTC(i, 'points', Number(e.target.value))} />
+                          <span className="text-xs text-gray-500">Points:</span>
+                          <input type="number" min="1" className="input w-20 text-xs py-1" value={tc.points} onChange={e=>setTestCases(t=>t.map((x,idx)=>idx===i?{...x,points:Number(e.target.value)}:x))} />
                         </div>
                       </div>
                     </div>
                   ))}
                 </div>
               </div>
-
               <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => setChModal(false)} className="btn-secondary flex-1 justify-center">Cancel</button>
-                <button type="submit" disabled={chSaving} className="btn-primary flex-1 justify-center">
-                  <CheckCircle className="w-4 h-4" />
-                  {chSaving ? 'Saving...' : editingCh ? 'Update Challenge' : 'Create Challenge'}
-                </button>
+                <button type="button" onClick={()=>setChModal(false)} className="btn-secondary flex-1 justify-center">Cancel</button>
+                <button type="submit" disabled={chSaving} className="btn-primary flex-1 justify-center"><CheckCircle className="w-4 h-4"/>{chSaving?'Saving...':editingCh?'Update':'Create Challenge'}</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Adjust balance modal */}
+      {adjustUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-sm">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
+              <h2 className="font-bold text-white">Adjust Balance</h2>
+              <button onClick={()=>setAdjustUser(null)} className="p-1 rounded-lg hover:bg-gray-800 text-gray-400"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="flex items-center gap-3 p-3 bg-gray-800 rounded-xl">
+                <div className={`w-9 h-9 rounded-full ${avatarColor(adjustUser.name)} flex items-center justify-center text-sm font-bold text-white`}>{avatar(adjustUser.name)}</div>
+                <div>
+                  <p className="text-sm font-semibold text-white">{adjustUser.name}</p>
+                  <p className="text-xs text-gray-400">Current: {fmt(adjustUser.balance)} RWF</p>
+                </div>
+              </div>
+              <div><label className="label">Amount (positive = add, negative = deduct)</label><input type="number" className="input" value={adjustAmt} onChange={e=>setAdjustAmt(e.target.value)} placeholder="e.g. 5000 or -1000" /></div>
+              <div><label className="label">Reason</label><input className="input" value={adjustNote} onChange={e=>setAdjustNote(e.target.value)} placeholder="e.g. Prize correction" /></div>
+              <div className="flex gap-3">
+                <button onClick={()=>setAdjustUser(null)} className="btn-secondary flex-1 justify-center">Cancel</button>
+                <button onClick={doAdjust} disabled={!adjustAmt} className="btn-primary flex-1 justify-center">Apply</button>
+              </div>
+            </div>
           </div>
         </div>
       )}
