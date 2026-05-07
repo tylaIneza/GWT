@@ -218,6 +218,22 @@ CREATE INDEX idx_sessions_ip            ON user_sessions(ip_address);
 CREATE INDEX idx_flags_user             ON cheat_flags(user_id);
 CREATE INDEX idx_flags_reviewed         ON cheat_flags(is_reviewed);
 
+CREATE TABLE IF NOT EXISTS challenge_bets (
+  id                VARCHAR(36)   PRIMARY KEY,
+  user_id           VARCHAR(36)   NOT NULL,
+  challenge_id      VARCHAR(36)   NOT NULL,
+  amount            DECIMAL(15,2) NOT NULL,
+  multiplier        DECIMAL(5,2)  NOT NULL,
+  potential_payout  DECIMAL(15,2) NOT NULL,
+  status            ENUM('pending','won','lost','refunded') NOT NULL DEFAULT 'pending',
+  submission_id     VARCHAR(36),
+  resolved_at       DATETIME,
+  created_at        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id)      REFERENCES users(id)      ON DELETE CASCADE,
+  FOREIGN KEY (challenge_id) REFERENCES challenges(id) ON DELETE CASCADE,
+  INDEX idx_bet_user_challenge (user_id, challenge_id)
+);
+
 -- Seed admin user  (password: Admin@1234)
 INSERT IGNORE INTO users (id, name, email, password_hash, role)
 VALUES (
