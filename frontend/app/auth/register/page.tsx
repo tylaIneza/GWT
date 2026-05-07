@@ -50,8 +50,18 @@ export default function RegisterPage() {
           </div>
           <div>
             <label className="label">Phone (for MoMo/Airtel)</label>
-            <input value={form.phone} onChange={e => setForm(p => ({...p, phone: e.target.value}))}
-              className="input" placeholder="07XX XXX XXX" />
+            <input
+              value={form.phone}
+              onChange={e => {
+                const v = e.target.value.replace(/[^\d]/g, '').slice(0, 10);
+                setForm(p => ({...p, phone: v}));
+              }}
+              pattern="07[2-9][0-9]{7}"
+              title="Enter a valid Rwandan phone number (07X XXXXXXX)"
+              className="input" placeholder="07XXXXXXXX" />
+            {form.phone && !/^07[2-9]\d{7}$/.test(form.phone) && form.phone.length > 2 && (
+              <p className="text-xs text-red-400 mt-1">Must be 07X followed by 7 digits (e.g. 0781234567)</p>
+            )}
           </div>
           <div>
             <label className="label">Password</label>

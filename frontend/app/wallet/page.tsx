@@ -182,8 +182,10 @@ export default function WalletPage() {
               </div>
               <div>
                 <label className="label">Phone Number</label>
-                <input value={form.phone} onChange={e => setForm(f => ({...f, phone: e.target.value}))}
-                  className="input" placeholder="07XX XXX XXX" required />
+                <input value={form.phone}
+                  onChange={e => { const v = e.target.value.replace(/[^\d]/g, '').slice(0, 10); setForm(f => ({...f, phone: v})); }}
+                  pattern="07[2-9][0-9]{7}" title="Valid Rwandan phone (07X XXXXXXX)"
+                  className="input" placeholder="07XXXXXXXX" required />
               </div>
               <div>
                 <label className="label">Amount (RWF)</label>
@@ -216,8 +218,10 @@ export default function WalletPage() {
               </div>
               <div>
                 <label className="label">Your {form.provider === 'mtn' ? 'MTN' : 'Airtel'} Number</label>
-                <input value={form.phone} onChange={e => setForm(f => ({...f, phone: e.target.value}))}
-                  className="input" placeholder="07XX XXX XXX" required />
+                <input value={form.phone}
+                  onChange={e => { const v = e.target.value.replace(/[^\d]/g, '').slice(0, 10); setForm(f => ({...f, phone: v})); }}
+                  pattern="07[2-9][0-9]{7}" title="Valid Rwandan phone (07X XXXXXXX)"
+                  className="input" placeholder="07XXXXXXXX" required />
               </div>
               <div>
                 <label className="label">Amount (RWF)</label>

@@ -278,6 +278,49 @@ export default function AdminDashboard() {
     catch { notify('Error'); }
   };
 
+  // Quick actions
+  const exportUsersCSV = async () => {
+    try {
+      const r = await api.get('/admin/users/export');
+      const rows: any[] = r.data;
+      const headers = ['ID','Name','Email','Balance','Total Earnings','Risk Score','Banned','KYC Verified','Joined'];
+      const csv = [
+        headers.join(','),
+        ...rows.map(u => [
+          u.id, `"${u.name}"`, u.email,
+          u.balance ?? 0, u.total_earnings ?? 0,
+          u.risk_score, u.is_banned ? 'Yes':'No',
+          u.kyc_verified ? 'Yes':'No',
+          new Date(u.created_at).toLocaleDateString(),
+        ].join(',')),
+      ].join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a'); a.href = url;
+      a.download = `codearena-users-${Date.now()}.csv`; a.click();
+      URL.revokeObjectURL(url);
+      notify(`Exported ${rows.length} users ✓`);
+    } catch { notify('Export failed'); }
+  };
+
+  const doRefreshLeaderboard = async () => {
+    try {
+      await api.post('/admin/leaderboard/refresh');
+      const r = await api.get('/leaderboard/global');
+      setLeaderboard((r.data || []).slice(0, 5));
+      notify('Leaderboard refreshed ✓');
+    } catch { notify('Refresh failed'); }
+  };
+
+  const doBulkDismissFlags = async () => {
+    if (!confirm('Dismiss all low-risk unreviewed flags?')) return;
+    try {
+      const r = await api.post('/admin/flags/bulk-dismiss');
+      loadAntiCheat();
+      notify(`Dismissed ${r.data.dismissed} low-risk flags ✓`);
+    } catch { notify('Error'); }
+  };
+
   // Finance
   const doDeposit = async () => {
     if (!depositAmt) return;
@@ -926,10 +969,10 @@ export default function AdminDashboard() {
                 <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5 space-y-3">
                   <h2 className="font-bold text-white text-sm flex items-center gap-2"><Zap className="w-4 h-4 text-amber-400" /> Quick Actions</h2>
                   {[
-                    { label:'View All Submissions',    desc:'Browse full submission history',         action:()=>{}, icon:Eye      },
-                    { label:'Export User Data',        desc:'Download CSV of all user records',       action:()=>{}, icon:Download },
-                    { label:'Refresh Leaderboard',     desc:'Recalculate global rankings now',        action:()=>{}, icon:RefreshCw},
-                    { label:'Clear Suspicious Flags',  desc:'Bulk dismiss low-risk flags',            action:()=>{}, icon:CheckCircle},
+                    { label:'View All Submissions',    desc:'Browse full submission history',         action:()=>switchView('anticheat'), icon:Eye      },
+                    { label:'Export User Data',        desc:'Download CSV of all user records',       action:exportUsersCSV,              icon:Download },
+                    { label:'Refresh Leaderboard',     desc:'Recalculate global rankings now',        action:doRefreshLeaderboard,        icon:RefreshCw},
+                    { label:'Clear Suspicious Flags',  desc:'Bulk dismiss low-risk flags',            action:doBulkDismissFlags,          icon:CheckCircle},
                   ].map(a => (
                     <button key={a.label} onClick={a.action}
                       className="w-full flex items-center gap-3 p-3 rounded-xl border border-gray-800 hover:border-gray-700 hover:bg-gray-800/40 transition-all text-left group">

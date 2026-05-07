@@ -101,4 +101,36 @@ export class AdminService {
     }
     return this.wallet.debit(userId, Math.abs(amount), 'adjustment', ref, 'internal', null, { reason });
   }
+
+  async exportUsers() {
+    return this.db.queryMany(
+      `SELECT u.id, u.name, u.email, u.role, u.is_banned, u.risk_score,
+              u.total_earnings, u.kyc_verified, u.created_at, w.balance
+       FROM users u LEFT JOIN wallets w ON w.user_id = u.id
+       WHERE u.role = 'user' ORDER BY u.created_at DESC`,
+      [],
+    );
+  }
+
+  async bulkDismissLowRiskFlags(adminId: string) {
+    const flags = await this.db.queryMany(
+      `SELECT id FROM cheat_flags WHERE is_reviewed = 0 AND (severity = 'low' OR risk_score < 30)`,
+      [],
+    );
+    for (const f of flags) {
+      await this.db.execute(
+        `UPDATE cheat_flags SET is_reviewed = 1, reviewed_by = ?, review_action = 'dismissed', review_notes = 'Bulk auto-dismissed (low risk)' WHERE id = ?`,
+        [adminId, f.id],
+      );
+    }
+    return { dismissed: flags.length };
+  }
+
+  async refreshLeaderboard() {
+    await this.db.execute(
+      `DELETE FROM leaderboards WHERE contest_id NOT IN (SELECT id FROM contests)`,
+      [],
+    );
+    return { refreshed: true };
+  }
 }

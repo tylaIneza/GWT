@@ -50,4 +50,13 @@ export class AdminController {
   depositToWallet(@Body() body: { amount: number; note?: string }) {
     return this.svc.adminDeposit(body.amount, body.note || 'Manual top-up');
   }
+
+  @Get('users/export')
+  exportUsers() { return this.svc.exportUsers(); }
+
+  @Post('flags/bulk-dismiss')
+  bulkDismissFlags(@Req() req: any) { return this.svc.bulkDismissLowRiskFlags(req.user.id); }
+
+  @Post('leaderboard/refresh')
+  refreshLeaderboard() { return this.svc.refreshLeaderboard(); }
 }
