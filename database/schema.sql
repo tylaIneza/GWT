@@ -1,22 +1,28 @@
 -- ============================================================
--- CODE ARENA — MYSQL / MARIADB SCHEMA
+-- CODE ARENA — GLOBAL PLATFORM SCHEMA (MySQL 8.0)
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS users (
-  id            VARCHAR(36)   PRIMARY KEY,
-  name          VARCHAR(255)  NOT NULL,
-  email         VARCHAR(255)  UNIQUE NOT NULL,
-  password_hash VARCHAR(255)  NOT NULL,
-  role          VARCHAR(20)   NOT NULL DEFAULT 'user',
-  phone         VARCHAR(30),
-  country_code  VARCHAR(5)    DEFAULT 'RW',
-  is_banned     TINYINT(1)    DEFAULT 0,
-  ban_reason    TEXT,
-  risk_score    INT           DEFAULT 0,
-  kyc_verified  TINYINT(1)    DEFAULT 0,
-  total_earnings DECIMAL(15,2) DEFAULT 0.00,
-  created_at    DATETIME      DEFAULT CURRENT_TIMESTAMP,
-  updated_at    DATETIME      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  id               VARCHAR(36)   PRIMARY KEY,
+  name             VARCHAR(255)  NOT NULL,
+  email            VARCHAR(255)  UNIQUE NOT NULL,
+  password_hash    VARCHAR(255)  NOT NULL,
+  role             VARCHAR(20)   NOT NULL DEFAULT 'user',
+  phone            VARCHAR(30),
+  country_code     VARCHAR(5)    DEFAULT 'US',
+  language         VARCHAR(5)    DEFAULT 'en',
+  timezone         VARCHAR(50)   DEFAULT 'UTC',
+  is_banned        TINYINT(1)    DEFAULT 0,
+  ban_reason       TEXT,
+  risk_score       INT           DEFAULT 0,
+  kyc_verified     TINYINT(1)    DEFAULT 0,
+  kyc_status       VARCHAR(20)   DEFAULT 'none',
+  total_earnings   DECIMAL(15,2) DEFAULT 0.00,
+  preferred_currency VARCHAR(3)  DEFAULT 'USD',
+  avatar_url       VARCHAR(500),
+  bio              TEXT,
+  created_at       DATETIME      DEFAULT CURRENT_TIMESTAMP,
+  updated_at       DATETIME      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS wallets (
@@ -24,7 +30,7 @@ CREATE TABLE IF NOT EXISTS wallets (
   user_id        VARCHAR(36)   NOT NULL UNIQUE,
   balance        DECIMAL(15,2) NOT NULL DEFAULT 0.00,
   locked_balance DECIMAL(15,2) NOT NULL DEFAULT 0.00,
-  currency       VARCHAR(3)    NOT NULL DEFAULT 'RWF',
+  currency       VARCHAR(3)    NOT NULL DEFAULT 'USD',
   version        INT           NOT NULL DEFAULT 0,
   updated_at     DATETIME      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -36,6 +42,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   user_id            VARCHAR(36)   NOT NULL,
   type               VARCHAR(50)   NOT NULL,
   amount             DECIMAL(15,2) NOT NULL,
+  currency           VARCHAR(3)    NOT NULL DEFAULT 'USD',
   balance_before     DECIMAL(15,2) NOT NULL,
   balance_after      DECIMAL(15,2) NOT NULL,
   status             VARCHAR(20)   NOT NULL DEFAULT 'pending',
@@ -63,6 +70,7 @@ CREATE TABLE IF NOT EXISTS challenges (
   is_published                TINYINT(1)    DEFAULT 0,
   randomize_inputs            TINYINT(1)    DEFAULT 1,
   solution_template           JSON,
+  prize_usd                   DECIMAL(10,2) DEFAULT 0.00,
   created_by                  VARCHAR(36),
   created_at                  DATETIME      DEFAULT CURRENT_TIMESTAMP,
   updated_at                  DATETIME      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -88,13 +96,16 @@ CREATE TABLE IF NOT EXISTS contests (
   title              VARCHAR(255)  NOT NULL,
   description        TEXT,
   entry_fee          DECIMAL(15,2) NOT NULL DEFAULT 0.00,
+  entry_fee_currency VARCHAR(3)   DEFAULT 'USD',
   prize_pool         DECIMAL(15,2) NOT NULL DEFAULT 0.00,
+  prize_currency     VARCHAR(3)    DEFAULT 'USD',
   prize_distribution JSON,
   start_time         DATETIME      NOT NULL,
   end_time           DATETIME      NOT NULL,
   max_participants   INT,
   status             VARCHAR(20)   NOT NULL DEFAULT 'upcoming',
   is_rated           TINYINT(1)    DEFAULT 1,
+  region             VARCHAR(50)   DEFAULT 'global',
   created_by         VARCHAR(36),
   created_at         DATETIME      DEFAULT CURRENT_TIMESTAMP,
   updated_at         DATETIME      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -206,23 +217,12 @@ CREATE TABLE IF NOT EXISTS cheat_flags (
   FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
--- Indexes
-CREATE INDEX idx_submissions_user       ON submissions(user_id);
-CREATE INDEX idx_submissions_challenge  ON submissions(challenge_id);
-CREATE INDEX idx_submissions_contest    ON submissions(contest_id);
-CREATE INDEX idx_submissions_time       ON submissions(submitted_at DESC);
-CREATE INDEX idx_transactions_user      ON transactions(user_id);
-CREATE INDEX idx_transactions_status    ON transactions(status);
-CREATE INDEX idx_leaderboard_contest    ON leaderboards(contest_id, rank_position);
-CREATE INDEX idx_sessions_ip            ON user_sessions(ip_address);
-CREATE INDEX idx_flags_user             ON cheat_flags(user_id);
-CREATE INDEX idx_flags_reviewed         ON cheat_flags(is_reviewed);
-
 CREATE TABLE IF NOT EXISTS challenge_bets (
   id                VARCHAR(36)   PRIMARY KEY,
   user_id           VARCHAR(36)   NOT NULL,
   challenge_id      VARCHAR(36)   NOT NULL,
   amount            DECIMAL(15,2) NOT NULL,
+  currency          VARCHAR(3)    DEFAULT 'USD',
   multiplier        DECIMAL(5,2)  NOT NULL,
   potential_payout  DECIMAL(15,2) NOT NULL,
   status            ENUM('pending','won','lost','refunded') NOT NULL DEFAULT 'pending',
@@ -234,15 +234,82 @@ CREATE TABLE IF NOT EXISTS challenge_bets (
   INDEX idx_bet_user_challenge (user_id, challenge_id)
 );
 
--- Seed admin user  (password: Ineza@12)
-INSERT IGNORE INTO users (id, name, email, password_hash, role)
+-- Referral system
+CREATE TABLE IF NOT EXISTS referrals (
+  id            VARCHAR(36)  PRIMARY KEY,
+  referrer_id   VARCHAR(36)  NOT NULL,
+  referred_id   VARCHAR(36)  NOT NULL UNIQUE,
+  reward_amount DECIMAL(10,2) DEFAULT 5.00,
+  currency      VARCHAR(3)   DEFAULT 'USD',
+  status        VARCHAR(20)  DEFAULT 'pending',
+  paid_at       DATETIME,
+  created_at    DATETIME     DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (referrer_id) REFERENCES users(id),
+  FOREIGN KEY (referred_id) REFERENCES users(id)
+);
+
+-- KYC documents
+CREATE TABLE IF NOT EXISTS kyc_documents (
+  id            VARCHAR(36)  PRIMARY KEY,
+  user_id       VARCHAR(36)  NOT NULL,
+  doc_type      VARCHAR(50)  NOT NULL,
+  doc_url       VARCHAR(500) NOT NULL,
+  status        VARCHAR(20)  DEFAULT 'pending',
+  reviewed_by   VARCHAR(36),
+  review_notes  TEXT,
+  submitted_at  DATETIME     DEFAULT CURRENT_TIMESTAMP,
+  reviewed_at   DATETIME,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+-- Indexes
+CREATE INDEX idx_submissions_user       ON submissions(user_id);
+CREATE INDEX idx_submissions_challenge  ON submissions(challenge_id);
+CREATE INDEX idx_submissions_contest    ON submissions(contest_id);
+CREATE INDEX idx_submissions_time       ON submissions(submitted_at DESC);
+CREATE INDEX idx_transactions_user      ON transactions(user_id);
+CREATE INDEX idx_transactions_status    ON transactions(status);
+CREATE INDEX idx_leaderboard_contest    ON leaderboards(contest_id, rank_position);
+CREATE INDEX idx_sessions_ip            ON user_sessions(ip_address);
+CREATE INDEX idx_flags_user             ON cheat_flags(user_id);
+CREATE INDEX idx_flags_reviewed         ON cheat_flags(is_reviewed);
+CREATE INDEX idx_users_country          ON users(country_code);
+
+-- ============================================================
+-- SEED DATA
+-- ============================================================
+
+-- Admin user (password: Ineza@12)
+INSERT IGNORE INTO users (id, name, email, password_hash, role, country_code, language, kyc_verified, kyc_status)
 VALUES (
   'admin-00000000-0000-0000-0000-000000000001',
   'Platform Admin',
   'inezapaccy4@gmail.com',
-  '$2a$12$xKCO2yWIuiQNoJtsDGtXcuSyJQDyre2H3Ixnsi80QFvJQbdNLwQj.',
-  'admin'
+  '$2a$12$AQwUuKhAyTb/xfrsj2Sdp.tIccn8c7EYmKkXmsQslyBx0T0/vlAkS',
+  'admin',
+  'RW',
+  'en',
+  1,
+  'approved'
 );
 
-INSERT IGNORE INTO wallets (id, user_id)
-VALUES ('wallet-admin-00000000', 'admin-00000000-0000-0000-0000-000000000001');
+INSERT IGNORE INTO wallets (id, user_id, currency)
+VALUES ('wallet-admin-00000000', 'admin-00000000-0000-0000-0000-000000000001', 'USD');
+
+-- Test user (password: Test@1234)
+INSERT IGNORE INTO users (id, name, email, password_hash, role, country_code, language, phone, kyc_verified, kyc_status)
+VALUES (
+  'user-test-00000000-0000-0000-000000000001',
+  'Test User',
+  'testuser@codearena.com',
+  '$2a$12$hc3t/TomlI5Cj2dSKNOU3ue2fIDXzPuFV1VjFnn/fUAKvOEpXYEE2',
+  'user',
+  'US',
+  'en',
+  '+1234567890',
+  0,
+  'none'
+);
+
+INSERT IGNORE INTO wallets (id, user_id, balance, currency)
+VALUES ('wallet-test-00000000', 'user-test-00000000-0000-0000-000000000001', 50.00, 'USD');

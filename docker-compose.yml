@@ -1,24 +1,25 @@
 version: '3.8'
 
 services:
-  postgres:
-    image: postgres:15-alpine
-    container_name: gwt_postgres
+  mysql:
+    image: mysql:8.0
+    container_name: gwt_mysql
     restart: unless-stopped
     environment:
-      POSTGRES_DB: codeplatform
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres123
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_DATABASE: codeplatform
+      MYSQL_USER: codearena
+      MYSQL_PASSWORD: codearena123
     ports:
-      - "5432:5432"
+      - "3306:3306"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - mysql_data:/var/lib/mysql
       - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "codearena", "--password=codearena123"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   code-runner:
     build:
@@ -47,10 +48,16 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=4000
-      - DATABASE_URL=postgresql://postgres:postgres123@postgres:5432/codeplatform
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=codearena
+      - DB_PASSWORD=codearena123
+      - DB_NAME=codeplatform
       - JWT_SECRET=change-this-in-production-min-32-chars-long
       - JWT_EXPIRES_IN=7d
       - CODE_RUNNER_URL=http://code-runner:3001
+      - FRONTEND_URL=http://localhost:3000
+      # Mobile Money (Rwanda)
       - MTN_BASE_URL=https://sandbox.momodeveloper.mtn.com
       - MTN_SUBSCRIPTION_KEY=your-mtn-subscription-key
       - MTN_API_USER=your-api-user-uuid
@@ -58,12 +65,20 @@ services:
       - AIRTEL_BASE_URL=https://openapi.airtel.africa
       - AIRTEL_CLIENT_ID=your-airtel-client-id
       - AIRTEL_CLIENT_SECRET=your-airtel-client-secret
-      - FRONTEND_URL=http://localhost:3000
+      # International Payments
+      - STRIPE_SECRET_KEY=your-stripe-secret-key
+      - STRIPE_WEBHOOK_SECRET=your-stripe-webhook-secret
+      - PAYPAL_CLIENT_ID=your-paypal-client-id
+      - PAYPAL_CLIENT_SECRET=your-paypal-client-secret
+      - PAYPAL_MODE=sandbox
+      # Crypto
+      - CRYPTO_WALLET_BTC=your-btc-wallet-address
+      - CRYPTO_WALLET_USDT=your-usdt-wallet-address
     depends_on:
-      postgres:
+      mysql:
         condition: service_healthy
       code-runner:
         condition: service_started
 
 volumes:
-  postgres_data:
+  mysql_data:

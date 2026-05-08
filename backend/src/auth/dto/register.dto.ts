@@ -24,4 +24,8 @@ export class RegisterDto {
   @IsOptional()
   @IsString()
   country_code?: string;
+
+  @IsOptional()
+  @IsString()
+  language?: string;
 }

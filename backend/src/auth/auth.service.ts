@@ -17,17 +17,20 @@ export class AuthService {
     );
     if (existing) throw new ConflictException('Email already registered');
 
-    const hash   = await bcrypt.hash(dto.password, 12);
-    const userId = uuid();
-    const walId  = uuid();
+    const hash        = await bcrypt.hash(dto.password, 12);
+    const userId      = uuid();
+    const walId       = uuid();
+    const countryCode = dto.country_code || 'US';
+    const language    = dto.language    || 'en';
+    const currency    = this.currencyForCountry(countryCode);
 
     await this.db.transaction(async (conn) => {
       await conn.query(
-        'INSERT INTO users (id, name, email, password_hash, phone, country_code) VALUES (?,?,?,?,?,?)',
-        [userId, dto.name, dto.email.toLowerCase(), hash, dto.phone || null, dto.country_code || 'RW'],
+        'INSERT INTO users (id, name, email, password_hash, phone, country_code, language, preferred_currency) VALUES (?,?,?,?,?,?,?,?)',
+        [userId, dto.name, dto.email.toLowerCase(), hash, dto.phone || null, countryCode, language, currency],
       );
       await conn.query(
-        'INSERT INTO wallets (id, user_id) VALUES (?,?)', [walId, userId],
+        'INSERT INTO wallets (id, user_id, currency) VALUES (?,?,?)', [walId, userId, currency],
       );
     });
 
@@ -71,6 +74,16 @@ export class AuthService {
        WHERE u.id = ?`,
       [userId],
     );
+  }
+
+  private currencyForCountry(code: string): string {
+    const map: Record<string, string> = {
+      RW: 'RWF', KE: 'KES', NG: 'NGN', GH: 'GHS', TZ: 'TZS', UG: 'UGX',
+      GB: 'GBP', EU: 'EUR', FR: 'EUR', DE: 'EUR', ES: 'EUR', IT: 'EUR', PT: 'EUR', NL: 'EUR',
+      JP: 'JPY', CN: 'CNY', KR: 'KRW', IN: 'INR', BR: 'BRL', AU: 'AUD', CA: 'CAD',
+      ZA: 'ZAR', EG: 'EGP', MA: 'MAD', SA: 'SAR', AE: 'AED', SG: 'SGD', MY: 'MYR',
+    };
+    return map[code] || 'USD';
   }
 
   private sign(user: any) {
