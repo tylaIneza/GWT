@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import api from '@/lib/api';
 import { getToken, isAdmin, getUser, logout } from '@/lib/auth';
+import { useI18n } from '@/lib/i18n-context';
 import {
   LayoutDashboard, Users, Trophy, Wallet, ShieldAlert, AlertTriangle,
   Settings, Code2, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight,
@@ -85,6 +86,7 @@ function StatCard({ icon: Icon, label, value, sub, trend, color, glow }: any) {
 export default function AdminDashboard() {
   const router = useRouter();
   const admin  = getUser();
+  const { t }  = useI18n();
 
   const [view,       setView]       = useState<View>('overview');
   const [sideOpen,   setSideOpen]   = useState(true);
@@ -340,13 +342,13 @@ export default function AdminDashboard() {
 
   // ── Sidebar nav items
   const nav = [
-    { key: 'overview',   label: 'Overview',     icon: LayoutDashboard },
-    { key: 'users',      label: 'Users',         icon: Users           },
-    { key: 'financial',  label: 'Financial',     icon: Wallet          },
-    { key: 'challenges', label: 'Challenges',    icon: Code2           },
-    { key: 'contests',   label: 'Contests',      icon: Trophy          },
-    { key: 'anticheat',  label: 'Anti-Cheat',    icon: ShieldAlert     },
-    { key: 'system',     label: 'System',        icon: Settings        },
+    { key: 'overview',   label: t('adm_overview'),   icon: LayoutDashboard },
+    { key: 'users',      label: t('adm_users'),       icon: Users           },
+    { key: 'financial',  label: t('adm_financial'),   icon: Wallet          },
+    { key: 'challenges', label: t('adm_challenges'),  icon: Code2           },
+    { key: 'contests',   label: t('adm_contests'),    icon: Trophy          },
+    { key: 'anticheat',  label: t('adm_anticheat'),   icon: ShieldAlert     },
+    { key: 'system',     label: t('adm_system'),      icon: Settings        },
   ] as const;
 
   return (

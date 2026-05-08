@@ -4,15 +4,17 @@ import { useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import api from '@/lib/api';
 import { getToken, getUser } from '@/lib/auth';
+import { useI18n } from '@/lib/i18n-context';
 import { Trophy, CheckCircle, Wallet } from 'lucide-react';
 
 const MEDAL = ['🥇','🥈','🥉'];
 
 export default function LeaderboardPage() {
-  const router   = useRouter();
-  const user     = getUser();
-  const [data,   setData]    = useState<any[]>([]);
-  const [loading,setLoading] = useState(true);
+  const router    = useRouter();
+  const user      = getUser();
+  const { t }     = useI18n();
+  const [data,    setData]    = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => { if (!getToken()) router.push('/auth/login'); }, []);
   useEffect(() => {
@@ -28,9 +30,9 @@ export default function LeaderboardPage() {
       <main className="max-w-4xl mx-auto px-4 sm:px-6 py-8 space-y-6">
         <div>
           <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-            <Trophy className="w-6 h-6 text-yellow-400" /> Global Leaderboard
+            <Trophy className="w-6 h-6 text-yellow-400" /> {t('lb_title')}
           </h1>
-          <p className="text-gray-500 text-sm mt-1">Top performers ranked by problems solved</p>
+          <p className="text-gray-500 text-sm mt-1">{t('lb_subtitle')}</p>
         </div>
 
         {loading ? (
@@ -42,8 +44,8 @@ export default function LeaderboardPage() {
             <table className="w-full text-sm">
               <thead className="border-b border-gray-800">
                 <tr>
-                  {['#', 'Player', 'Solved', 'Earnings', 'Wins'].map(h => (
-                    <th key={h} className="text-left px-4 py-3 text-xs text-gray-500 font-semibold uppercase">{h}</th>
+                  {(['rank', 'lb_player', 'solved', 'earnings', 'wins'] as const).map(h => (
+                    <th key={h} className="text-left px-4 py-3 text-xs text-gray-500 font-semibold uppercase">{t(h)}</th>
                   ))}
                 </tr>
               </thead>
@@ -62,7 +64,7 @@ export default function LeaderboardPage() {
                         </div>
                         <div>
                           <p className={`font-semibold ${p.id === user?.id ? 'text-green-400' : 'text-white'}`}>
-                            {p.name} {p.id === user?.id && <span className="text-xs text-gray-500">(you)</span>}
+                            {p.name} {p.id === user?.id && <span className="text-xs text-gray-500">{t('lb_you')}</span>}
                           </p>
                           <p className="text-xs text-gray-500">{p.country_code}</p>
                         </div>
@@ -75,7 +77,7 @@ export default function LeaderboardPage() {
                     </td>
                     <td className="px-4 py-3">
                       <span className="flex items-center gap-1 text-green-400 font-semibold">
-                        <Wallet className="w-3.5 h-3.5" />{Number(p.total_earnings || 0).toLocaleString()} RWF
+                        <Wallet className="w-3.5 h-3.5" />{Number(p.total_earnings || 0).toLocaleString()}
                       </span>
                     </td>
                     <td className="px-4 py-3">
@@ -87,7 +89,7 @@ export default function LeaderboardPage() {
                 ))}
               </tbody>
             </table>
-            {data.length === 0 && <div className="p-12 text-center text-gray-500">No data yet</div>}
+            {data.length === 0 && <div className="p-12 text-center text-gray-500">{t('lb_empty')}</div>}
           </div>
         )}
       </main>

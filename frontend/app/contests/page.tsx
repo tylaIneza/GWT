@@ -5,7 +5,8 @@ import Link from 'next/link';
 import Navbar from '@/components/Navbar';
 import api from '@/lib/api';
 import { getToken } from '@/lib/auth';
-import { Trophy, Users, Clock, Wallet } from 'lucide-react';
+import { useI18n } from '@/lib/i18n-context';
+import { Trophy, Users, Clock } from 'lucide-react';
 
 function CountDown({ end }: { end: string }) {
   const [left, setLeft] = useState('');
@@ -26,7 +27,8 @@ function CountDown({ end }: { end: string }) {
 }
 
 export default function ContestsPage() {
-  const router = useRouter();
+  const router        = useRouter();
+  const { t }         = useI18n();
   const [contests, setContests] = useState<any[]>([]);
   const [loading,  setLoading]  = useState(true);
   const [filter,   setFilter]   = useState('');
@@ -45,17 +47,24 @@ export default function ContestsPage() {
     upcoming: 'badge-blue', active: 'badge-green', completed: 'badge', cancelled: 'badge-red',
   };
 
+  const filters: [string, string][] = [
+    ['', t('con_all')],
+    ['upcoming', t('con_upcoming')],
+    ['active', t('con_live')],
+    ['completed', t('con_ended')],
+  ];
+
   return (
     <div className="min-h-screen bg-gray-950">
       <Navbar />
       <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-white">Contests</h1>
-            <p className="text-gray-500 text-sm mt-1">Compete for real prize pools</p>
+            <h1 className="text-2xl font-bold text-white">{t('con_title')}</h1>
+            <p className="text-gray-500 text-sm mt-1">{t('con_subtitle')}</p>
           </div>
           <div className="flex gap-2">
-            {[['', 'All'], ['upcoming', 'Upcoming'], ['active', 'Live'], ['completed', 'Ended']].map(([v, l]) => (
+            {filters.map(([v, l]) => (
               <button key={v} onClick={() => setFilter(v)}
                 className={`btn btn-sm ${filter === v ? 'btn-primary' : 'btn-secondary'}`}>{l}</button>
             ))}
@@ -69,8 +78,8 @@ export default function ContestsPage() {
         ) : contests.length === 0 ? (
           <div className="card p-16 text-center">
             <Trophy className="w-10 h-10 mx-auto text-gray-700 mb-3" />
-            <p className="text-gray-500">No contests available right now</p>
-            <p className="text-gray-600 text-sm mt-1">Check back soon!</p>
+            <p className="text-gray-500">{t('con_no_contests')}</p>
+            <p className="text-gray-600 text-sm mt-1">{t('con_check_back')}</p>
           </div>
         ) : (
           <div className="space-y-4">
@@ -81,36 +90,34 @@ export default function ContestsPage() {
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1.5">
                       <span className={`badge text-xs capitalize ${STATUS_BADGE[c.status] || 'badge'}`}>{c.status}</span>
-                      {c.is_rated && <span className="badge text-xs">Rated</span>}
+                      {c.is_rated && <span className="badge text-xs">{t('con_rated')}</span>}
                     </div>
                     <h2 className="font-bold text-white text-lg group-hover:text-green-300 transition-colors">{c.title}</h2>
                     {c.description && <p className="text-gray-500 text-sm mt-1 line-clamp-2">{c.description}</p>}
                   </div>
 
-                  {/* Prize */}
                   <div className="shrink-0 text-right">
                     <p className="text-2xl font-black text-green-400">{Number(c.prize_pool || 0).toLocaleString()}</p>
-                    <p className="text-gray-500 text-xs">RWF prize pool</p>
+                    <p className="text-gray-500 text-xs">RWF {t('con_prize_pool')}</p>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
                   <div className="bg-gray-800 rounded-xl px-3 py-2.5">
-                    <p className="text-xs text-gray-500 mb-0.5">Entry Fee</p>
+                    <p className="text-xs text-gray-500 mb-0.5">{t('con_entry_fee')}</p>
                     <p className="font-semibold text-white text-sm">
-                      {Number(c.entry_fee) === 0 ? 'Free' : `${Number(c.entry_fee).toLocaleString()} RWF`}
+                      {Number(c.entry_fee) === 0 ? t('con_free') : `${Number(c.entry_fee).toLocaleString()} RWF`}
                     </p>
                   </div>
                   <div className="bg-gray-800 rounded-xl px-3 py-2.5">
-                    <p className="text-xs text-gray-500 mb-0.5 flex items-center gap-1"><Users className="w-3 h-3" />Players</p>
+                    <p className="text-xs text-gray-500 mb-0.5 flex items-center gap-1"><Users className="w-3 h-3" />{t('con_participants')}</p>
                     <p className="font-semibold text-white text-sm">
-                      {c.participant_count || 0}
-                      {c.max_participants ? `/${c.max_participants}` : ''}
+                      {c.participant_count || 0}{c.max_participants ? `/${c.max_participants}` : ''}
                     </p>
                   </div>
                   <div className="bg-gray-800 rounded-xl px-3 py-2.5 col-span-2">
                     <p className="text-xs text-gray-500 mb-0.5 flex items-center gap-1"><Clock className="w-3 h-3" />
-                      {c.status === 'active' ? 'Ends in' : c.status === 'upcoming' ? 'Starts' : 'Ended'}
+                      {c.status === 'active' ? t('con_ends_in') : c.status === 'upcoming' ? t('con_upcoming') : t('con_ended')}
                     </p>
                     {c.status === 'active'
                       ? <CountDown end={c.end_time} />
