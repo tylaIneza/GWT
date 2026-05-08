@@ -1,28 +1,9 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
-import Database from 'better-sqlite3';
-import * as path from 'path';
-import * as fs   from 'fs';
+import * as mysql from 'mysql2/promise';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
-/** Strip MySQL-only clauses so the SQL runs on SQLite */
-function toSQLite(sql: string): string {
-  return sql
-    .replace(/\s+FOR\s+UPDATE/gi, '')
-    .replace(/\bINSERT\s+IGNORE\b/gi, 'INSERT OR IGNORE');
-}
-
-/** Convert params to SQLite-safe types (no Date, no undefined) */
-function sanitize(params: any[]): any[] {
-  return params.map(v => {
-    if (v === undefined)    return null;
-    if (v instanceof Date)  return v.toISOString();
-    if (typeof v === 'boolean') return v ? 1 : 0;
-    return v;
-  });
-}
-
-/** Auto-parse JSON string fields coming back from SQLite TEXT columns */
+/** Auto-parse JSON string fields coming back from MySQL TEXT columns */
 function hydrate(rows: any[]): any[] {
   return rows.map(row => {
     const out: any = {};
@@ -37,350 +18,370 @@ function hydrate(rows: any[]): any[] {
   });
 }
 
-// ─── fake "PoolConnection" used inside transaction callbacks ─────────────────
-class SQLiteConn {
-  constructor(private readonly db: Database.Database) {}
+/** Convert SQLite seed syntax to MySQL */
+function sqliteToMySQL(sql: string): string {
+  return sql
+    .replace(/INSERT OR IGNORE/g, 'INSERT IGNORE')
+    .replace(/'\s*\|\|\s*CHAR\(10\)\s*\|\|\s*'/g, '\n');
+}
 
-  /** Returns [rows, null] — matches mysql2 destructuring pattern */
-  query<T = any>(sql: string, params?: any[]): Promise<[T[], null]> {
-    const rows = hydrate(this.db.prepare(toSQLite(sql)).all(...sanitize(params || []))) as T[];
-    return Promise.resolve([rows, null]);
+// ─── Connection wrapper used inside transaction callbacks ────────────────────
+class MySQLConn {
+  constructor(private readonly conn: mysql.PoolConnection) {}
+
+  async query<T = any>(sql: string, params?: any[]): Promise<[T[], null]> {
+    const [rows] = await this.conn.execute<any>(sql, params || []);
+    return [hydrate(Array.isArray(rows) ? rows : []) as T[], null];
   }
 
-  execute(sql: string, params?: any[]): Promise<any> {
-    const r = this.db.prepare(toSQLite(sql)).run(...sanitize(params || []));
-    return Promise.resolve({ affectedRows: r.changes, insertId: r.lastInsertRowid });
+  async execute(sql: string, params?: any[]): Promise<any> {
+    const [result] = await this.conn.execute(sql, params || []);
+    return result;
   }
 }
 
-// ─── SQLite schema (replaces schema.sql for local dev) ──────────────────────
+// ─── MySQL schema ────────────────────────────────────────────────────────────
 const SCHEMA = `
-PRAGMA journal_mode = WAL;
-PRAGMA foreign_keys = ON;
+SET FOREIGN_KEY_CHECKS=0;
 
 CREATE TABLE IF NOT EXISTS users (
-  id               TEXT PRIMARY KEY,
-  name             TEXT NOT NULL,
-  email            TEXT UNIQUE NOT NULL,
-  password_hash    TEXT NOT NULL,
-  role             TEXT NOT NULL DEFAULT 'user',
-  phone            TEXT,
-  country_code     TEXT DEFAULT 'US',
-  language         TEXT DEFAULT 'en',
-  timezone         TEXT DEFAULT 'UTC',
-  is_banned        INTEGER DEFAULT 0,
-  ban_reason       TEXT,
-  risk_score       INTEGER DEFAULT 0,
-  kyc_verified     INTEGER DEFAULT 0,
-  kyc_status       TEXT DEFAULT 'none',
-  total_earnings   REAL DEFAULT 0,
-  preferred_currency TEXT DEFAULT 'USD',
-  email_verified   INTEGER DEFAULT 0,
-  avatar_url       TEXT,
-  bio              TEXT,
-  created_at       TEXT DEFAULT (datetime('now')),
-  updated_at       TEXT DEFAULT (datetime('now'))
-);
+  id                 VARCHAR(36)  PRIMARY KEY,
+  name               VARCHAR(255) NOT NULL,
+  email              VARCHAR(255) UNIQUE NOT NULL,
+  password_hash      VARCHAR(255) NOT NULL,
+  role               VARCHAR(20)  NOT NULL DEFAULT 'user',
+  phone              VARCHAR(50),
+  country_code       VARCHAR(10)  DEFAULT 'US',
+  language           VARCHAR(10)  DEFAULT 'en',
+  timezone           VARCHAR(50)  DEFAULT 'UTC',
+  is_banned          TINYINT(1)   DEFAULT 0,
+  ban_reason         TEXT,
+  risk_score         INT          DEFAULT 0,
+  kyc_verified       TINYINT(1)   DEFAULT 0,
+  kyc_status         VARCHAR(20)  DEFAULT 'none',
+  total_earnings     DOUBLE       DEFAULT 0,
+  preferred_currency VARCHAR(10)  DEFAULT 'USD',
+  email_verified     TINYINT(1)   DEFAULT 0,
+  avatar_url         TEXT,
+  bio                TEXT,
+  created_at         DATETIME     DEFAULT CURRENT_TIMESTAMP,
+  updated_at         DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS wallets (
-  id             TEXT PRIMARY KEY,
-  user_id        TEXT NOT NULL UNIQUE,
-  balance        REAL NOT NULL DEFAULT 0,
-  locked_balance REAL NOT NULL DEFAULT 0,
-  currency       TEXT NOT NULL DEFAULT 'USD',
-  version        INTEGER NOT NULL DEFAULT 0,
-  updated_at     TEXT DEFAULT (datetime('now')),
+  id             VARCHAR(36) PRIMARY KEY,
+  user_id        VARCHAR(36) NOT NULL UNIQUE,
+  balance        DOUBLE      NOT NULL DEFAULT 0,
+  locked_balance DOUBLE      NOT NULL DEFAULT 0,
+  currency       VARCHAR(10) NOT NULL DEFAULT 'USD',
+  version        INT         NOT NULL DEFAULT 0,
+  updated_at     DATETIME    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS transactions (
-  id                 TEXT PRIMARY KEY,
-  wallet_id          TEXT NOT NULL,
-  user_id            TEXT NOT NULL,
-  type               TEXT NOT NULL,
-  amount             REAL NOT NULL,
-  currency           TEXT NOT NULL DEFAULT 'USD',
-  balance_before     REAL NOT NULL,
-  balance_after      REAL NOT NULL,
-  status             TEXT NOT NULL DEFAULT 'pending',
-  reference          TEXT UNIQUE,
-  payment_provider   TEXT,
-  provider_reference TEXT,
+  id                 VARCHAR(36)  PRIMARY KEY,
+  wallet_id          VARCHAR(36)  NOT NULL,
+  user_id            VARCHAR(36)  NOT NULL,
+  type               VARCHAR(50)  NOT NULL,
+  amount             DOUBLE       NOT NULL,
+  currency           VARCHAR(10)  NOT NULL DEFAULT 'USD',
+  balance_before     DOUBLE       NOT NULL,
+  balance_after      DOUBLE       NOT NULL,
+  status             VARCHAR(20)  NOT NULL DEFAULT 'pending',
+  reference          VARCHAR(255) UNIQUE,
+  payment_provider   VARCHAR(50),
+  provider_reference VARCHAR(255),
   metadata           TEXT,
-  created_at         TEXT DEFAULT (datetime('now')),
+  created_at         DATETIME     DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (wallet_id) REFERENCES wallets(id),
   FOREIGN KEY (user_id)   REFERENCES users(id)
-);
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS challenges (
-  id                          TEXT PRIMARY KEY,
-  title                       TEXT NOT NULL,
-  slug                        TEXT UNIQUE NOT NULL,
-  description                 TEXT NOT NULL,
-  difficulty                  TEXT NOT NULL DEFAULT 'easy',
-  category                    TEXT,
+  id                          VARCHAR(36)  PRIMARY KEY,
+  title                       VARCHAR(255) NOT NULL,
+  slug                        VARCHAR(255) UNIQUE NOT NULL,
+  description                 TEXT         NOT NULL,
+  difficulty                  VARCHAR(20)  NOT NULL DEFAULT 'easy',
+  category                    VARCHAR(100),
   supported_languages         TEXT,
-  time_limit_ms               INTEGER DEFAULT 5000,
-  memory_limit_mb             INTEGER DEFAULT 256,
-  max_submissions             INTEGER DEFAULT 10,
-  submission_cooldown_seconds INTEGER DEFAULT 30,
-  is_published                INTEGER DEFAULT 0,
-  randomize_inputs            INTEGER DEFAULT 1,
+  time_limit_ms               INT          DEFAULT 5000,
+  memory_limit_mb             INT          DEFAULT 256,
+  max_submissions             INT          DEFAULT 10,
+  submission_cooldown_seconds INT          DEFAULT 30,
+  is_published                TINYINT(1)   DEFAULT 0,
+  randomize_inputs            TINYINT(1)   DEFAULT 1,
   solution_template           TEXT,
-  prize_usd                   REAL DEFAULT 0,
-  created_by                  TEXT,
-  created_at                  TEXT DEFAULT (datetime('now')),
-  updated_at                  TEXT DEFAULT (datetime('now')),
+  prize_usd                   DOUBLE       DEFAULT 0,
+  created_by                  VARCHAR(36),
+  created_at                  DATETIME     DEFAULT CURRENT_TIMESTAMP,
+  updated_at                  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (created_by) REFERENCES users(id)
-);
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS test_cases (
-  id               TEXT PRIMARY KEY,
-  challenge_id     TEXT NOT NULL,
-  input            TEXT NOT NULL,
-  expected_output  TEXT NOT NULL,
-  is_sample        INTEGER DEFAULT 0,
-  is_hidden        INTEGER DEFAULT 1,
-  points           INTEGER DEFAULT 1,
-  order_index      INTEGER DEFAULT 0,
-  explanation      TEXT,
-  created_at       TEXT DEFAULT (datetime('now')),
+  id              VARCHAR(36) PRIMARY KEY,
+  challenge_id    VARCHAR(36) NOT NULL,
+  input           TEXT        NOT NULL,
+  expected_output TEXT        NOT NULL,
+  is_sample       TINYINT(1)  DEFAULT 0,
+  is_hidden       TINYINT(1)  DEFAULT 1,
+  points          INT         DEFAULT 1,
+  order_index     INT         DEFAULT 0,
+  explanation     TEXT,
+  created_at      DATETIME    DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (challenge_id) REFERENCES challenges(id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS contests (
-  id                 TEXT PRIMARY KEY,
-  title              TEXT NOT NULL,
+  id                 VARCHAR(36)  PRIMARY KEY,
+  title              VARCHAR(255) NOT NULL,
   description        TEXT,
-  entry_fee          REAL NOT NULL DEFAULT 0,
-  entry_fee_currency TEXT DEFAULT 'USD',
-  prize_pool         REAL NOT NULL DEFAULT 0,
-  prize_currency     TEXT DEFAULT 'USD',
+  entry_fee          DOUBLE       NOT NULL DEFAULT 0,
+  entry_fee_currency VARCHAR(10)  DEFAULT 'USD',
+  prize_pool         DOUBLE       NOT NULL DEFAULT 0,
+  prize_currency     VARCHAR(10)  DEFAULT 'USD',
   prize_distribution TEXT,
-  start_time         TEXT NOT NULL,
-  end_time           TEXT NOT NULL,
-  max_participants   INTEGER,
-  status             TEXT NOT NULL DEFAULT 'upcoming',
-  is_rated           INTEGER DEFAULT 1,
-  region             TEXT DEFAULT 'global',
-  created_by         TEXT,
-  created_at         TEXT DEFAULT (datetime('now')),
-  updated_at         TEXT DEFAULT (datetime('now')),
+  start_time         DATETIME     NOT NULL,
+  end_time           DATETIME     NOT NULL,
+  max_participants   INT,
+  status             VARCHAR(20)  NOT NULL DEFAULT 'upcoming',
+  is_rated           TINYINT(1)   DEFAULT 1,
+  region             VARCHAR(50)  DEFAULT 'global',
+  created_by         VARCHAR(36),
+  created_at         DATETIME     DEFAULT CURRENT_TIMESTAMP,
+  updated_at         DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (created_by) REFERENCES users(id)
-);
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS contest_challenges (
-  id           TEXT PRIMARY KEY,
-  contest_id   TEXT NOT NULL,
-  challenge_id TEXT NOT NULL,
-  order_index  INTEGER DEFAULT 0,
+  id           VARCHAR(36) PRIMARY KEY,
+  contest_id   VARCHAR(36) NOT NULL,
+  challenge_id VARCHAR(36) NOT NULL,
+  order_index  INT         DEFAULT 0,
   UNIQUE (contest_id, challenge_id),
   FOREIGN KEY (contest_id)   REFERENCES contests(id)   ON DELETE CASCADE,
   FOREIGN KEY (challenge_id) REFERENCES challenges(id)
-);
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS submissions (
-  id                 TEXT PRIMARY KEY,
-  user_id            TEXT NOT NULL,
-  challenge_id       TEXT NOT NULL,
-  contest_id         TEXT,
-  language           TEXT NOT NULL,
-  code               TEXT NOT NULL,
-  status             TEXT NOT NULL DEFAULT 'pending',
-  score              INTEGER DEFAULT 0,
-  execution_time_ms  INTEGER,
-  memory_used_mb     REAL,
+  id                 VARCHAR(36) PRIMARY KEY,
+  user_id            VARCHAR(36) NOT NULL,
+  challenge_id       VARCHAR(36) NOT NULL,
+  contest_id         VARCHAR(36),
+  language           VARCHAR(50) NOT NULL,
+  code               LONGTEXT    NOT NULL,
+  status             VARCHAR(20) NOT NULL DEFAULT 'pending',
+  score              INT         DEFAULT 0,
+  execution_time_ms  INT,
+  memory_used_mb     DOUBLE,
   test_results       TEXT,
-  risk_score         INTEGER DEFAULT 0,
-  ip_address         TEXT,
+  risk_score         INT         DEFAULT 0,
+  ip_address         VARCHAR(50),
   user_agent         TEXT,
   typing_stats       TEXT,
-  paste_count        INTEGER DEFAULT 0,
-  time_to_first_char INTEGER,
-  submitted_at       TEXT DEFAULT (datetime('now')),
+  paste_count        INT         DEFAULT 0,
+  time_to_first_char INT,
+  submitted_at       DATETIME    DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id)      REFERENCES users(id),
   FOREIGN KEY (challenge_id) REFERENCES challenges(id)
-);
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS contest_participants (
-  id             TEXT PRIMARY KEY,
-  contest_id     TEXT NOT NULL,
-  user_id        TEXT NOT NULL,
-  transaction_id TEXT,
-  score          INTEGER DEFAULT 0,
-  total_time_ms  INTEGER DEFAULT 0,
-  rank_position  INTEGER,
-  prize_amount   REAL,
-  prize_paid     INTEGER DEFAULT 0,
-  joined_at      TEXT DEFAULT (datetime('now')),
+  id             VARCHAR(36) PRIMARY KEY,
+  contest_id     VARCHAR(36) NOT NULL,
+  user_id        VARCHAR(36) NOT NULL,
+  transaction_id VARCHAR(36),
+  score          INT         DEFAULT 0,
+  total_time_ms  INT         DEFAULT 0,
+  rank_position  INT,
+  prize_amount   DOUBLE,
+  prize_paid     TINYINT(1)  DEFAULT 0,
+  joined_at      DATETIME    DEFAULT CURRENT_TIMESTAMP,
   UNIQUE (contest_id, user_id),
   FOREIGN KEY (contest_id) REFERENCES contests(id),
   FOREIGN KEY (user_id)    REFERENCES users(id)
-);
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS leaderboards (
-  id            TEXT PRIMARY KEY,
-  contest_id    TEXT NOT NULL,
-  user_id       TEXT NOT NULL,
-  user_name     TEXT,
-  rank_position INTEGER NOT NULL,
-  score         INTEGER DEFAULT 0,
-  total_time_ms INTEGER DEFAULT 0,
-  updated_at    TEXT DEFAULT (datetime('now')),
+  id            VARCHAR(36)  PRIMARY KEY,
+  contest_id    VARCHAR(36)  NOT NULL,
+  user_id       VARCHAR(36)  NOT NULL,
+  user_name     VARCHAR(255),
+  rank_position INT          NOT NULL,
+  score         INT          DEFAULT 0,
+  total_time_ms INT          DEFAULT 0,
+  updated_at    DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE (contest_id, user_id),
   FOREIGN KEY (contest_id) REFERENCES contests(id),
   FOREIGN KEY (user_id)    REFERENCES users(id)
-);
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS user_sessions (
-  id           TEXT PRIMARY KEY,
-  user_id      TEXT NOT NULL,
-  token_hash   TEXT NOT NULL,
-  ip_address   TEXT,
+  id           VARCHAR(36)  PRIMARY KEY,
+  user_id      VARCHAR(36)  NOT NULL,
+  token_hash   VARCHAR(255) NOT NULL,
+  ip_address   VARCHAR(50),
   user_agent   TEXT,
-  is_active    INTEGER DEFAULT 1,
-  created_at   TEXT DEFAULT (datetime('now')),
-  last_seen_at TEXT DEFAULT (datetime('now')),
-  expires_at   TEXT,
+  is_active    TINYINT(1)   DEFAULT 1,
+  created_at   DATETIME     DEFAULT CURRENT_TIMESTAMP,
+  last_seen_at DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  expires_at   DATETIME,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS device_fingerprints (
-  id               TEXT PRIMARY KEY,
-  user_id          TEXT NOT NULL,
-  fingerprint_hash TEXT NOT NULL,
+  id               VARCHAR(36)  PRIMARY KEY,
+  user_id          VARCHAR(36)  NOT NULL,
+  fingerprint_hash VARCHAR(255) NOT NULL,
   user_agent       TEXT,
-  ip_address       TEXT,
-  first_seen_at    TEXT DEFAULT (datetime('now')),
-  last_seen_at     TEXT DEFAULT (datetime('now')),
+  ip_address       VARCHAR(50),
+  first_seen_at    DATETIME     DEFAULT CURRENT_TIMESTAMP,
+  last_seen_at     DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE (user_id, fingerprint_hash),
   FOREIGN KEY (user_id) REFERENCES users(id)
-);
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS cheat_flags (
-  id            TEXT PRIMARY KEY,
-  user_id       TEXT NOT NULL,
-  submission_id TEXT,
-  contest_id    TEXT,
-  flag_type     TEXT NOT NULL,
-  severity      TEXT NOT NULL DEFAULT 'low',
-  risk_score    INTEGER DEFAULT 0,
+  id            VARCHAR(36) PRIMARY KEY,
+  user_id       VARCHAR(36) NOT NULL,
+  submission_id VARCHAR(36),
+  contest_id    VARCHAR(36),
+  flag_type     VARCHAR(50) NOT NULL,
+  severity      VARCHAR(20) NOT NULL DEFAULT 'low',
+  risk_score    INT         DEFAULT 0,
   details       TEXT,
-  is_reviewed   INTEGER DEFAULT 0,
-  reviewed_by   TEXT,
-  review_action TEXT,
+  is_reviewed   TINYINT(1)  DEFAULT 0,
+  reviewed_by   VARCHAR(36),
+  review_action VARCHAR(50),
   review_notes  TEXT,
-  created_at    TEXT DEFAULT (datetime('now')),
+  created_at    DATETIME    DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id)
-);
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS challenge_bets (
-  id               TEXT PRIMARY KEY,
-  user_id          TEXT NOT NULL,
-  challenge_id     TEXT NOT NULL,
-  amount           REAL NOT NULL,
-  currency         TEXT DEFAULT 'USD',
-  multiplier       REAL NOT NULL,
-  potential_payout REAL NOT NULL,
-  status           TEXT NOT NULL DEFAULT 'pending',
-  submission_id    TEXT,
-  resolved_at      TEXT,
-  created_at       TEXT DEFAULT (datetime('now')),
+  id               VARCHAR(36) PRIMARY KEY,
+  user_id          VARCHAR(36) NOT NULL,
+  challenge_id     VARCHAR(36) NOT NULL,
+  amount           DOUBLE      NOT NULL,
+  currency         VARCHAR(10) DEFAULT 'USD',
+  multiplier       DOUBLE      NOT NULL,
+  potential_payout DOUBLE      NOT NULL,
+  status           VARCHAR(20) NOT NULL DEFAULT 'pending',
+  submission_id    VARCHAR(36),
+  resolved_at      DATETIME,
+  created_at       DATETIME    DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id)      REFERENCES users(id)      ON DELETE CASCADE,
   FOREIGN KEY (challenge_id) REFERENCES challenges(id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS challenge_sessions (
-  id           TEXT PRIMARY KEY,
-  user_id      TEXT NOT NULL,
-  challenge_id TEXT NOT NULL,
-  status       TEXT NOT NULL DEFAULT 'active',
-  started_at   TEXT DEFAULT (datetime('now')),
-  expires_at   TEXT NOT NULL,
+  id           VARCHAR(36) PRIMARY KEY,
+  user_id      VARCHAR(36) NOT NULL,
+  challenge_id VARCHAR(36) NOT NULL,
+  status       VARCHAR(20) NOT NULL DEFAULT 'active',
+  started_at   DATETIME    DEFAULT CURRENT_TIMESTAMP,
+  expires_at   DATETIME    NOT NULL,
   FOREIGN KEY (user_id)      REFERENCES users(id)      ON DELETE CASCADE,
   FOREIGN KEY (challenge_id) REFERENCES challenges(id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS referrals (
-  id            TEXT PRIMARY KEY,
-  referrer_id   TEXT NOT NULL,
-  referred_id   TEXT NOT NULL UNIQUE,
-  reward_amount REAL DEFAULT 5.0,
-  currency      TEXT DEFAULT 'USD',
-  status        TEXT DEFAULT 'pending',
-  paid_at       TEXT,
-  created_at    TEXT DEFAULT (datetime('now')),
+  id            VARCHAR(36) PRIMARY KEY,
+  referrer_id   VARCHAR(36) NOT NULL,
+  referred_id   VARCHAR(36) NOT NULL UNIQUE,
+  reward_amount DOUBLE      DEFAULT 5.0,
+  currency      VARCHAR(10) DEFAULT 'USD',
+  status        VARCHAR(20) DEFAULT 'pending',
+  paid_at       DATETIME,
+  created_at    DATETIME    DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (referrer_id) REFERENCES users(id),
   FOREIGN KEY (referred_id) REFERENCES users(id)
-);
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS kyc_documents (
-  id            TEXT PRIMARY KEY,
-  user_id       TEXT NOT NULL,
-  doc_type      TEXT NOT NULL,
-  doc_url       TEXT NOT NULL,
-  status        TEXT DEFAULT 'pending',
-  reviewed_by   TEXT,
-  review_notes  TEXT,
-  submitted_at  TEXT DEFAULT (datetime('now')),
-  reviewed_at   TEXT,
+  id           VARCHAR(36) PRIMARY KEY,
+  user_id      VARCHAR(36) NOT NULL,
+  doc_type     VARCHAR(50) NOT NULL,
+  doc_url      TEXT        NOT NULL,
+  status       VARCHAR(20) DEFAULT 'pending',
+  reviewed_by  VARCHAR(36),
+  review_notes TEXT,
+  submitted_at DATETIME    DEFAULT CURRENT_TIMESTAMP,
+  reviewed_at  DATETIME,
   FOREIGN KEY (user_id) REFERENCES users(id)
-);
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS email_verifications (
-  id         TEXT PRIMARY KEY,
-  user_id    TEXT NOT NULL,
-  email      TEXT NOT NULL,
-  otp_code   TEXT NOT NULL,
-  expires_at TEXT NOT NULL,
-  used       INTEGER DEFAULT 0,
-  created_at TEXT DEFAULT (datetime('now')),
+  id         VARCHAR(36)  PRIMARY KEY,
+  user_id    VARCHAR(36)  NOT NULL,
+  email      VARCHAR(255) NOT NULL,
+  otp_code   VARCHAR(10)  NOT NULL,
+  expires_at DATETIME     NOT NULL,
+  used       TINYINT(1)   DEFAULT 0,
+  created_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS password_resets (
-  id         TEXT PRIMARY KEY,
-  email      TEXT NOT NULL,
-  otp_code   TEXT NOT NULL,
-  expires_at TEXT NOT NULL,
-  used       INTEGER DEFAULT 0,
-  created_at TEXT DEFAULT (datetime('now'))
-);
+  id         VARCHAR(36)  PRIMARY KEY,
+  email      VARCHAR(255) NOT NULL,
+  otp_code   VARCHAR(10)  NOT NULL,
+  expires_at DATETIME     NOT NULL,
+  used       TINYINT(1)   DEFAULT 0,
+  created_at DATETIME     DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
 
--- Indexes
-CREATE INDEX IF NOT EXISTS idx_submissions_user      ON submissions(user_id);
-CREATE INDEX IF NOT EXISTS idx_submissions_challenge ON submissions(challenge_id);
-CREATE INDEX IF NOT EXISTS idx_submissions_time      ON submissions(submitted_at DESC);
-CREATE INDEX IF NOT EXISTS idx_transactions_user     ON transactions(user_id);
-CREATE INDEX IF NOT EXISTS idx_transactions_status   ON transactions(status);
-CREATE INDEX IF NOT EXISTS idx_leaderboard_contest   ON leaderboards(contest_id, rank_position);
-CREATE INDEX IF NOT EXISTS idx_sessions_ip           ON user_sessions(ip_address);
-CREATE INDEX IF NOT EXISTS idx_flags_user            ON cheat_flags(user_id);
-CREATE INDEX IF NOT EXISTS idx_users_country         ON users(country_code);
+SET FOREIGN_KEY_CHECKS=1;
 `;
+
+// ─── Column migrations (add missing columns to pre-existing tables) ──────────
+const MIGRATIONS = [
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS language          VARCHAR(10)  DEFAULT 'en'`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone          VARCHAR(50)  DEFAULT 'UTC'`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_status        VARCHAR(20)  DEFAULT 'none'`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_currency VARCHAR(10) DEFAULT 'USD'`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url        TEXT`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS bio               TEXT`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified    TINYINT(1)   DEFAULT 0`,
+
+  // challenges table — add columns missing from older schema versions
+  `ALTER TABLE challenges ADD COLUMN IF NOT EXISTS category                    VARCHAR(100)`,
+  `ALTER TABLE challenges ADD COLUMN IF NOT EXISTS supported_languages         TEXT`,
+  `ALTER TABLE challenges ADD COLUMN IF NOT EXISTS time_limit_ms               INT          DEFAULT 5000`,
+  `ALTER TABLE challenges ADD COLUMN IF NOT EXISTS memory_limit_mb             INT          DEFAULT 256`,
+  `ALTER TABLE challenges ADD COLUMN IF NOT EXISTS max_submissions             INT          DEFAULT 10`,
+  `ALTER TABLE challenges ADD COLUMN IF NOT EXISTS submission_cooldown_seconds INT          DEFAULT 30`,
+  `ALTER TABLE challenges ADD COLUMN IF NOT EXISTS randomize_inputs            TINYINT(1)   DEFAULT 1`,
+  `ALTER TABLE challenges ADD COLUMN IF NOT EXISTS solution_template           TEXT`,
+  `ALTER TABLE challenges ADD COLUMN IF NOT EXISTS prize_usd                  DOUBLE       DEFAULT 0`,
+  `ALTER TABLE challenges ADD COLUMN IF NOT EXISTS created_by                 VARCHAR(36)`,
+  `ALTER TABLE challenges ADD COLUMN IF NOT EXISTS is_published               TINYINT(1)   DEFAULT 0`,
+];
 
 // Admin seed — password: Ineza@12
 const SEED = `
-INSERT OR IGNORE INTO users (id, name, email, password_hash, role, country_code, language, kyc_verified, kyc_status)
+INSERT IGNORE INTO users (id, name, email, password_hash, role, country_code, language, kyc_verified, kyc_status, email_verified)
 VALUES (
   'admin-00000000-0000-0000-0000-000000000001',
   'Platform Admin',
   'inezapaccy4@gmail.com',
   '$2a$12$AQwUuKhAyTb/xfrsj2Sdp.tIccn8c7EYmKkXmsQslyBx0T0/vlAkS',
-  'admin', 'RW', 'en', 1, 'approved'
+  'admin', 'RW', 'en', 1, 'approved', 1
 );
-INSERT OR IGNORE INTO wallets (id, user_id, currency)
+INSERT IGNORE INTO wallets (id, user_id, currency)
 VALUES ('wallet-admin-00000000', 'admin-00000000-0000-0000-0000-000000000001', 'USD');
 
-INSERT OR IGNORE INTO users (id, name, email, password_hash, role, country_code, language, phone)
+INSERT IGNORE INTO users (id, name, email, password_hash, role, country_code, language, phone, email_verified)
 VALUES (
   'user-test-00000000-0000-0000-000000000001',
   'Test User',
   'testuser@codearena.com',
   '$2a$12$hc3t/TomlI5Cj2dSKNOU3ue2fIDXzPuFV1VjFnn/fUAKvOEpXYEE2',
-  'user', 'US', 'en', '+1234567890'
+  'user', 'US', 'en', '+1234567890', 1
 );
-INSERT OR IGNORE INTO wallets (id, user_id, balance, currency)
+INSERT IGNORE INTO wallets (id, user_id, balance, currency)
 VALUES ('wallet-test-00000000', 'user-test-00000000-0000-0000-000000000001', 50.0, 'USD');
 `;
 
@@ -1095,78 +1096,116 @@ INSERT OR IGNORE INTO test_cases(id,challenge_id,input,expected_output,is_sample
 ('tc-h-050-3','ch-h-050','1 2' || CHAR(10) || '3' || CHAR(10) || '1','1 3',0,1,3);
 `;
 
+// ─── HTML easy challenge ─────────────────────────────────────────────────────
+const HTML_CHALLENGE_SEED = `
+INSERT IGNORE INTO challenges (id,title,slug,description,difficulty,category,supported_languages,time_limit_ms,memory_limit_mb,is_published,prize_usd,created_by)
+VALUES ('ch-e-001','HTML List Builder','html-list-builder','Read a page title on line 1, then read items one per line until EOF. Output a complete HTML page using exactly this format:\n<!DOCTYPE html>\n<html>\n<head><title>TITLE</title></head>\n<body>\n<h1>TITLE</h1>\n<ul>\n<li>ITEM</li>\n</ul>\n</body>\n</html>','easy','html','["javascript","typescript","python","java","cpp","csharp","php","go","rust","swift","kotlin","ruby"]',5000,256,1,0,NULL);
+
+INSERT IGNORE INTO test_cases(id,challenge_id,input,expected_output,is_sample,is_hidden,order_index) VALUES
+('tc-e-001-1','ch-e-001','My Page\nItem 1\nItem 2','<!DOCTYPE html>\n<html>\n<head><title>My Page</title></head>\n<body>\n<h1>My Page</h1>\n<ul>\n<li>Item 1</li>\n<li>Item 2</li>\n</ul>\n</body>\n</html>',1,0,1),
+('tc-e-001-2','ch-e-001','Shopping List\nApples\nBananas\nMilk','<!DOCTYPE html>\n<html>\n<head><title>Shopping List</title></head>\n<body>\n<h1>Shopping List</h1>\n<ul>\n<li>Apples</li>\n<li>Bananas</li>\n<li>Milk</li>\n</ul>\n</body>\n</html>',1,0,2),
+('tc-e-001-3','ch-e-001','Colors\nRed\nGreen\nBlue','<!DOCTYPE html>\n<html>\n<head><title>Colors</title></head>\n<body>\n<h1>Colors</h1>\n<ul>\n<li>Red</li>\n<li>Green</li>\n<li>Blue</li>\n</ul>\n</body>\n</html>',0,1,3);
+`;
+
 // ─── Service ────────────────────────────────────────────────────────────────
 
 @Injectable()
 export class DatabaseService implements OnModuleInit, OnModuleDestroy {
-  private db!: Database.Database;
+  private pool!: mysql.Pool;
   private readonly logger = new Logger(DatabaseService.name);
 
   async onModuleInit() {
-    const dbPath = process.env.DB_PATH || path.join(process.cwd(), 'data', 'codearena.db');
-    const dir    = path.dirname(dbPath);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const host     = process.env.DB_HOST     || 'localhost';
+    const port     = parseInt(process.env.DB_PORT || '3306');
+    const user     = process.env.DB_USER     || 'root';
+    const password = process.env.DB_PASSWORD || '';
+    const database = process.env.DB_NAME     || 'codearena';
 
-    this.db = new Database(dbPath);
-    this.db.exec(SCHEMA);
-    // Migration: add email_verified to existing databases
-    try { this.db.exec('ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 0'); } catch {}
-    this.db.exec(SEED);
-    this.db.exec(CHALLENGES_SEED);
-    // Mark pre-seeded users as verified
-    this.db.exec(`UPDATE users SET email_verified = 1 WHERE id IN (
-      'admin-00000000-0000-0000-0000-000000000001',
-      'user-test-00000000-0000-0000-000000000001'
-    )`);
-    this.logger.log(`SQLite ready: ${dbPath}`);
+    // Create database if it doesn't exist, then run schema + seeds
+    const init = await mysql.createConnection({ host, port, user, password, multipleStatements: true });
+    try {
+      await init.query(`CREATE DATABASE IF NOT EXISTS \`${database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+      await init.query(`USE \`${database}\``);
+
+      // Execute each DDL statement individually so SET FOREIGN_KEY_CHECKS=0 persists
+      const schemaStmts = SCHEMA.split(/;[ \t]*\n/).map(s => s.trim()).filter(Boolean);
+      for (const stmt of schemaStmts) {
+        await init.query(stmt);
+      }
+
+      // Add missing columns to pre-existing tables
+      for (const stmt of MIGRATIONS) {
+        try { await init.query(stmt); } catch {}
+      }
+
+      await init.query(SEED);
+      await init.query(sqliteToMySQL(CHALLENGES_SEED));
+      await init.query(HTML_CHALLENGE_SEED);
+    } finally {
+      await init.end();
+    }
+
+    this.pool = mysql.createPool({
+      host, port, user, password, database,
+      waitForConnections: true,
+      connectionLimit: 10,
+      dateStrings: true,
+    });
+
+    this.logger.log(`MySQL ready: ${host}:${port}/${database}`);
   }
 
   async onModuleDestroy() {
-    this.db?.close();
+    await this.pool?.end();
   }
 
-  // ─── Public query API (mirrors mysql2 surface) ──────────────────────────
+  // ─── Public query API ───────────────────────────────────────────────────
 
   async query<T = any>(sql: string, params?: any[]): Promise<T[]> {
-    return hydrate(this.db.prepare(toSQLite(sql)).all(...sanitize(params || []))) as T[];
+    const [rows] = await (params?.length
+      ? this.pool.execute<any>(sql, params)
+      : this.pool.query<any>(sql));
+    return hydrate(rows as any[]) as T[];
   }
 
   async queryOne<T = any>(sql: string, params?: any[]): Promise<T | null> {
-    const row = this.db.prepare(toSQLite(sql)).get(...sanitize(params || []));
-    if (!row) return null;
-    return hydrate([row as any])[0] as T;
+    const rows = await this.query<T>(sql, params);
+    return rows[0] ?? null;
   }
 
   async queryMany<T = any>(sql: string, params?: any[]): Promise<T[]> {
-    return hydrate(this.db.prepare(toSQLite(sql)).all(...sanitize(params || []))) as T[];
+    return this.query<T>(sql, params);
   }
 
   async execute(sql: string, params?: any[]): Promise<any> {
-    const r = this.db.prepare(toSQLite(sql)).run(...sanitize(params || []));
-    return { affectedRows: r.changes, insertId: r.lastInsertRowid };
+    const [result] = await this.pool.execute(sql, params || []);
+    return result;
   }
 
   // ─── Transactions ───────────────────────────────────────────────────────
 
-  async transaction<T>(fn: (conn: SQLiteConn) => Promise<T>): Promise<T> {
-    this.db.prepare('BEGIN IMMEDIATE').run();
-    const conn = new SQLiteConn(this.db);
+  async transaction<T>(fn: (conn: MySQLConn) => Promise<T>): Promise<T> {
+    const raw  = await this.pool.getConnection();
+    const conn = new MySQLConn(raw);
+    await raw.beginTransaction();
     try {
       const result = await fn(conn);
-      this.db.prepare('COMMIT').run();
+      await raw.commit();
       return result;
     } catch (err) {
-      try { this.db.prepare('ROLLBACK').run(); } catch {}
+      await raw.rollback();
       throw err;
+    } finally {
+      raw.release();
     }
   }
 
-  async txQuery<T = any>(conn: SQLiteConn, sql: string, params?: any[]): Promise<T[]> {
+  async txQuery<T = any>(conn: MySQLConn, sql: string, params?: any[]): Promise<T[]> {
     const [rows] = await conn.query<T>(sql, params);
     return rows;
   }
 
-  async txQueryOne<T = any>(conn: SQLiteConn, sql: string, params?: any[]): Promise<T | null> {
+  async txQueryOne<T = any>(conn: MySQLConn, sql: string, params?: any[]): Promise<T | null> {
     const [rows] = await conn.query<T>(sql, params);
     return rows[0] ?? null;
   }

@@ -90,7 +90,7 @@ export class AuthService {
     );
     if (!record) throw new BadRequestException('No pending verification found');
     if (record.used) throw new BadRequestException('OTP already used');
-    if (new Date(record.expires_at) < new Date()) throw new BadRequestException('OTP expired');
+    if (new Date(record.expires_at + 'Z') < new Date()) throw new BadRequestException('OTP expired');
     if (record.otp_code !== otp.trim()) throw new BadRequestException('Invalid OTP');
 
     await this.db.execute('UPDATE email_verifications SET used = 1 WHERE id = ?', [record.id]);
@@ -124,7 +124,7 @@ export class AuthService {
     }
 
     const otp = this.generateOtp();
-    const exp = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    const exp = this.toMySQLDate(new Date(Date.now() + 10 * 60 * 1000));
     await this.db.execute(
       'INSERT INTO password_resets (id, email, otp_code, expires_at) VALUES (?,?,?,?)',
       [uuid(), user.email, otp, exp],
@@ -141,7 +141,7 @@ export class AuthService {
     );
     if (!record) throw new BadRequestException('No pending reset found');
     if (record.used) throw new BadRequestException('OTP already used');
-    if (new Date(record.expires_at) < new Date()) throw new BadRequestException('OTP expired');
+    if (new Date(record.expires_at + 'Z') < new Date()) throw new BadRequestException('OTP expired');
     if (record.otp_code !== otp.trim()) throw new BadRequestException('Invalid OTP');
 
     const hash = await bcrypt.hash(newPassword, 12);
@@ -177,8 +177,12 @@ export class AuthService {
     return Math.floor(100000 + Math.random() * 900000).toString();
   }
 
+  private toMySQLDate(d: Date): string {
+    return d.toISOString().replace('T', ' ').slice(0, 19);
+  }
+
   private async saveOtp(userId: string, email: string, otp: string) {
-    const exp = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    const exp = this.toMySQLDate(new Date(Date.now() + 10 * 60 * 1000));
     // Invalidate previous OTPs
     await this.db.execute(
       'UPDATE email_verifications SET used = 1 WHERE user_id = ? AND used = 0',
@@ -206,9 +210,9 @@ export class AuthService {
 
   private async recordSession(userId: string, token: string, ip: string, ua: string) {
     const hash = crypto.createHash('sha256').update(token).digest('hex');
-    const exp  = new Date(Date.now() + 7 * 24 * 3600 * 1000);
+    const exp  = this.toMySQLDate(new Date(Date.now() + 7 * 24 * 3600 * 1000));
     await this.db.execute(
-      `INSERT OR IGNORE INTO user_sessions (id, user_id, token_hash, ip_address, user_agent, expires_at)
+      `INSERT IGNORE INTO user_sessions (id, user_id, token_hash, ip_address, user_agent, expires_at)
        VALUES (?,?,?,?,?,?)`,
       [uuid(), userId, hash, ip || '0.0.0.0', ua, exp],
     );
