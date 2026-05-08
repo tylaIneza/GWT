@@ -46,7 +46,7 @@ export class AdminService {
     const where   = search ? 'WHERE (u.name LIKE ? OR u.email LIKE ?)' : '';
     const params  = search ? [`%${search}%`, `%${search}%`, 30, offset] : [30, offset];
     return this.db.queryMany(
-      `SELECT u.id, u.name, u.email, u.role, u.is_banned, u.risk_score,
+      `SELECT u.id, u.name, u.email, u.role, u.is_banned, u.email_verified, u.risk_score,
               u.total_earnings, u.created_at, w.balance
        FROM users u LEFT JOIN wallets w ON w.user_id = u.id
        ${where} ORDER BY u.created_at DESC LIMIT ? OFFSET ?`,
@@ -61,6 +61,16 @@ export class AdminService {
 
   async unbanUser(userId: string) {
     await this.db.execute('UPDATE users SET is_banned = 0, ban_reason = NULL, risk_score = 0 WHERE id = ?', [userId]);
+    return { success: true };
+  }
+
+  async activateUser(userId: string) {
+    await this.db.execute('UPDATE users SET email_verified = 1 WHERE id = ?', [userId]);
+    return { success: true };
+  }
+
+  async deleteUser(userId: string) {
+    await this.db.execute('DELETE FROM users WHERE id = ? AND role != ?', [userId, 'admin']);
     return { success: true };
   }
 
@@ -104,7 +114,7 @@ export class AdminService {
 
   async exportUsers() {
     return this.db.queryMany(
-      `SELECT u.id, u.name, u.email, u.role, u.is_banned, u.risk_score,
+      `SELECT u.id, u.name, u.email, u.role, u.is_banned, u.email_verified, u.risk_score,
               u.total_earnings, u.kyc_verified, u.created_at, w.balance
        FROM users u LEFT JOIN wallets w ON w.user_id = u.id
        WHERE u.role = 'user' ORDER BY u.created_at DESC`,

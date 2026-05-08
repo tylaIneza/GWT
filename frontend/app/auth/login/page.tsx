@@ -24,7 +24,12 @@ export default function LoginPage() {
       setAuth(res.data.token, res.data.user);
       router.push(res.data.user.role === 'admin' ? '/admin' : '/dashboard');
     } catch (e: any) {
-      setError(e.response?.data?.message || 'Login failed. Please check your credentials.');
+      const data = e.response?.data;
+      if (data?.requiresVerification) {
+        router.push(`/auth/verify-email?email=${encodeURIComponent(form.email)}`);
+        return;
+      }
+      setError(data?.message || 'Login failed. Please check your credentials.');
     } finally { setLoading(false); }
   };
 
@@ -54,8 +59,8 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <Link href="/" className="inline-flex items-center gap-2 mb-6">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-green-500 to-emerald-700 flex items-center justify-center font-black text-xl">C</div>
-            <span className="font-bold text-white text-xl">CodeArena</span>
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-green-500 to-emerald-700 flex items-center justify-center font-black text-xl">D</div>
+            <span className="font-bold text-white text-xl">DevixCode</span>
           </Link>
           <h1 className="text-2xl font-bold text-white">{t('auth_login_title')}</h1>
           <p className="text-gray-500 text-sm mt-1">{t('auth_login_subtitle')}</p>
@@ -81,7 +86,12 @@ export default function LoginPage() {
             />
           </div>
           <div>
-            <label className="label">{t('auth_login_password')}</label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="label !mb-0">{t('auth_login_password')}</label>
+              <Link href="/auth/forgot-password" className="text-xs text-gray-500 hover:text-green-400 transition-colors">
+                {t('auth_login_forgot')}
+              </Link>
+            </div>
             <input
               type="password"
               value={form.password}

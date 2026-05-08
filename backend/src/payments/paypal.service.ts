@@ -45,7 +45,7 @@ export class PayPalService {
         application_context: {
           return_url: returnUrl,
           cancel_url: cancelUrl,
-          brand_name: 'CodeArena',
+          brand_name: 'DevixCode',
           user_action: 'PAY_NOW',
         },
       },

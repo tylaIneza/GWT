@@ -4,7 +4,6 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Globe, ChevronDown } from 'lucide-react';
 import api from '@/lib/api';
-import { setAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n-context';
 import { LANGUAGES, COUNTRIES } from '@/lib/i18n';
 
@@ -34,15 +33,14 @@ export default function RegisterPage() {
     }
     setLoading(true); setError('');
     try {
-      const res = await api.post('/auth/register', {
+      await api.post('/auth/register', {
         name: form.name,
         email: form.email,
         password: form.password,
         phone: form.phone || undefined,
         country_code: form.country_code,
       });
-      setAuth(res.data.token, res.data.user);
-      router.push('/dashboard');
+      router.push(`/auth/verify-email?email=${encodeURIComponent(form.email)}`);
     } catch (e: any) {
       setError(e.response?.data?.message || e.response?.data?.error || 'Registration failed');
     } finally { setLoading(false); }
@@ -74,8 +72,8 @@ export default function RegisterPage() {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <Link href="/" className="inline-flex items-center gap-2 mb-6">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-green-500 to-emerald-700 flex items-center justify-center font-black text-xl">C</div>
-            <span className="font-bold text-white text-xl">CodeArena</span>
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-green-500 to-emerald-700 flex items-center justify-center font-black text-xl">D</div>
+            <span className="font-bold text-white text-xl">DevixCode</span>
           </Link>
           <h1 className="text-2xl font-bold text-white">{t('auth_register_title')}</h1>
           <p className="text-gray-500 text-sm mt-1">{t('auth_register_subtitle')}</p>

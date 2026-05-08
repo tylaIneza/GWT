@@ -45,8 +45,8 @@ export default function Navbar() {
         {/* Logo */}
         <div className="flex items-center gap-6">
           <Link href="/dashboard" className="flex items-center gap-2 shrink-0">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-green-500 to-emerald-700 flex items-center justify-center font-black text-sm">C</div>
-            <span className="font-bold text-white hidden sm:block">CodeArena</span>
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-green-500 to-emerald-700 flex items-center justify-center font-black text-sm">D</div>
+            <span className="font-bold text-white hidden sm:block">DevixCode</span>
             <span className="hidden sm:block text-xs bg-green-900/30 border border-green-800/50 text-green-400 rounded-full px-1.5 py-0.5">Global</span>
           </Link>
 

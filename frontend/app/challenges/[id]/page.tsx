@@ -14,7 +14,7 @@ import {
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
 
-export const LANGUAGES = [
+const LANGUAGES = [
   { id: 'javascript', label: 'JavaScript', monaco: 'javascript', available: true  },
   { id: 'typescript', label: 'TypeScript', monaco: 'typescript', available: true  },
   { id: 'python',     label: 'Python',     monaco: 'python',     available: true  },

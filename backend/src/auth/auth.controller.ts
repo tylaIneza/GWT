@@ -19,6 +19,30 @@ export class AuthController {
     return this.auth.login(dto, req.ip, req.headers['user-agent']);
   }
 
+  @Post('verify-email')
+  @HttpCode(200)
+  verifyEmail(@Body() body: { email: string; otp: string }, @Req() req: any) {
+    return this.auth.verifyEmail(body.email, body.otp, req.ip, req.headers['user-agent']);
+  }
+
+  @Post('resend-otp')
+  @HttpCode(200)
+  resendOtp(@Body() body: { email: string }) {
+    return this.auth.resendOtp(body.email);
+  }
+
+  @Post('forgot-password')
+  @HttpCode(200)
+  forgotPassword(@Body() body: { email: string }) {
+    return this.auth.forgotPassword(body.email);
+  }
+
+  @Post('reset-password')
+  @HttpCode(200)
+  resetPassword(@Body() body: { email: string; otp: string; new_password: string }) {
+    return this.auth.resetPassword(body.email, body.otp, body.new_password);
+  }
+
   @Post('logout')
   @UseGuards(JwtAuthGuard)
   @HttpCode(200)

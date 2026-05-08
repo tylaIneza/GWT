@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, Query, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Param, Query, Req, UseGuards } from '@nestjs/common';
 import { AdminService }  from './admin.service';
 import { JwtAuthGuard }  from '../auth/jwt-auth.guard';
 import { RolesGuard }    from '../auth/roles.guard';
@@ -26,6 +26,16 @@ export class AdminController {
   @Post('users/:id/unban')
   unban(@Param('id') id: string) {
     return this.svc.unbanUser(id);
+  }
+
+  @Post('users/:id/activate')
+  activate(@Param('id') id: string) {
+    return this.svc.activateUser(id);
+  }
+
+  @Delete('users/:id')
+  deleteUser(@Param('id') id: string) {
+    return this.svc.deleteUser(id);
   }
 
   @Get('submissions')

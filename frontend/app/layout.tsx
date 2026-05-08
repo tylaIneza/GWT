@@ -3,12 +3,12 @@ import './globals.css';
 import { I18nProvider } from '@/lib/i18n-context';
 
 export const metadata: Metadata = {
-  title: 'CodeArena — Global Competitive Coding & Earn Real Money',
-  description: 'Solve coding challenges, compete in global tournaments, and earn real money. Join 50,000+ coders from 150+ countries.',
-  keywords: 'coding challenges, competitive programming, earn money coding, coding tournaments, global coding platform',
+  title: 'DevixCode — Competitive Coding Platform | Code. Compete. Earn.',
+  description: 'DevixCode by Credly Software Solution — Solve real-world algorithm challenges, compete in global coding tournaments, and earn real money prizes. 50,000+ developers across 150+ countries.',
+  keywords: 'competitive coding, algorithm challenges, earn money coding, programming tournaments, DevixCode, Credly Software Solution',
   openGraph: {
-    title: 'CodeArena — Code. Compete. Earn.',
-    description: 'Join coders worldwide. Solve challenges. Win real money.',
+    title: 'DevixCode — Code. Compete. Earn.',
+    description: 'The world\'s premier skill-based competitive coding platform by Credly Software Solution.',
     type: 'website',
   },
 };

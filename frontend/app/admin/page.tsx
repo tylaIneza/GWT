@@ -265,6 +265,15 @@ export default function AdminDashboard() {
     try { await api.post(`/admin/users/${id}/${ban?'ban':'unban'}`, { reason:'Admin action' }); loadUsers(userPage, userSearch); notify(`User ${ban?'banned':'unbanned'}`); }
     catch { notify('Error'); }
   };
+  const activateUser = async (id: string) => {
+    try { await api.post(`/admin/users/${id}/activate`); loadUsers(userPage, userSearch); notify('User activated ✓'); }
+    catch { notify('Error activating user'); }
+  };
+  const deleteUser = async (id: string, name: string) => {
+    if (!confirm(`Delete user "${name}"? This cannot be undone.`)) return;
+    try { await api.delete(`/admin/users/${id}`); loadUsers(userPage, userSearch); notify('User deleted'); }
+    catch (e: any) { notify(e.response?.data?.message || 'Error deleting user'); }
+  };
   const doAdjust = async () => {
     if (!adjustUser || !adjustAmt) return;
     try {
@@ -285,13 +294,14 @@ export default function AdminDashboard() {
     try {
       const r = await api.get('/admin/users/export');
       const rows: any[] = r.data;
-      const headers = ['ID','Name','Email','Balance','Total Earnings','Risk Score','Banned','KYC Verified','Joined'];
+      const headers = ['ID','Name','Email','Balance','Total Earnings','Risk Score','Email Verified','Banned','KYC Verified','Joined'];
       const csv = [
         headers.join(','),
         ...rows.map(u => [
           u.id, `"${u.name}"`, u.email,
           u.balance ?? 0, u.total_earnings ?? 0,
-          u.risk_score, u.is_banned ? 'Yes':'No',
+          u.risk_score, u.email_verified ? 'Yes':'No',
+          u.is_banned ? 'Yes':'No',
           u.kyc_verified ? 'Yes':'No',
           new Date(u.created_at).toLocaleDateString(),
         ].join(',')),
@@ -299,7 +309,7 @@ export default function AdminDashboard() {
       const blob = new Blob([csv], { type: 'text/csv' });
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement('a'); a.href = url;
-      a.download = `codearena-users-${Date.now()}.csv`; a.click();
+      a.download = `devixcode-users-${Date.now()}.csv`; a.click();
       URL.revokeObjectURL(url);
       notify(`Exported ${rows.length} users ✓`);
     } catch { notify('Export failed'); }
@@ -334,7 +344,8 @@ export default function AdminDashboard() {
 
   const filteredUsers = users.filter(u => {
     if (userFilter === 'banned') return u.is_banned;
-    if (userFilter === 'active') return !u.is_banned;
+    if (userFilter === 'active') return !u.is_banned && u.email_verified;
+    if (userFilter === 'pending') return !u.email_verified;
     return true;
   });
 
@@ -359,10 +370,10 @@ export default function AdminDashboard() {
 
         {/* Logo */}
         <div className="flex items-center gap-3 px-4 py-5 border-b border-gray-800">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-green-500 to-emerald-700 flex items-center justify-center font-black text-lg shrink-0">C</div>
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-green-500 to-emerald-700 flex items-center justify-center font-black text-lg shrink-0">D</div>
           {sideOpen && <div>
-            <p className="font-black text-white text-sm leading-tight">CodeArena</p>
-            <p className="text-xs text-green-500 font-semibold">Super Admin</p>
+            <p className="font-black text-white text-sm leading-tight">DevixCode</p>
+            <p className="text-xs text-green-500 font-semibold">Admin Panel</p>
           </div>}
         </div>
 
@@ -452,7 +463,7 @@ export default function AdminDashboard() {
               <div className="flex items-center justify-between">
                 <div>
                   <h1 className="text-xl font-black text-white">Platform Overview</h1>
-                  <p className="text-xs text-gray-500 mt-0.5">Real-time CodeArena analytics</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Real-time DevixCode analytics</p>
                 </div>
                 <button onClick={loadOverview} className="btn-secondary btn-sm gap-1.5">
                   <RefreshCw className="w-3 h-3" /> Refresh
@@ -579,7 +590,7 @@ export default function AdminDashboard() {
                     value={userSearch} onChange={e => { setUserSearch(e.target.value); loadUsers(1, e.target.value); }} />
                 </div>
                 <div className="flex gap-2">
-                  {[['all','All'],['active','Active'],['banned','Banned']].map(([v,l]) => (
+                  {[['all','All'],['active','Active'],['pending','Pending'],['banned','Banned']].map(([v,l]) => (
                     <button key={v} onClick={() => setUserFilter(v)}
                       className={`btn btn-sm ${userFilter===v?'btn-primary':'btn-secondary'}`}>{l}</button>
                   ))}
@@ -616,7 +627,11 @@ export default function AdminDashboard() {
                           <td className="px-4 py-3 text-green-400 font-semibold text-xs">{fmt(u.balance)} RWF</td>
                           <td className="px-4 py-3 text-amber-400 font-semibold text-xs">{fmt(u.total_earnings)} RWF</td>
                           <td className="px-4 py-3">
-                            <span className={`badge text-xs ${u.is_banned?'badge-red':'badge-green'}`}>{u.is_banned?'Banned':'Active'}</span>
+                            {u.is_banned
+                              ? <span className="badge text-xs badge-red">Banned</span>
+                              : !u.email_verified
+                              ? <span className="badge text-xs badge-yellow">Pending</span>
+                              : <span className="badge text-xs badge-green">Active</span>}
                           </td>
                           <td className="px-4 py-3">
                             <span className={`badge text-xs ${u.risk_score>60?'badge-red':u.risk_score>30?'badge-yellow':'badge-green'}`}>{u.risk_score}</span>
@@ -628,9 +643,20 @@ export default function AdminDashboard() {
                                 title="Adjust balance" className="p-1.5 rounded-lg hover:bg-gray-700 text-gray-400 hover:text-green-400">
                                 <Wallet className="w-3.5 h-3.5" />
                               </button>
+                              {!u.email_verified && (
+                                <button onClick={() => activateUser(u.id)} title="Activate account"
+                                  className="p-1.5 rounded-lg hover:bg-green-900/30 text-gray-400 hover:text-green-400 transition-colors">
+                                  <UserCheck className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                               <button onClick={() => banUser(u.id, !u.is_banned)}
+                                title={u.is_banned ? 'Unban user' : 'Ban user'}
                                 className={`p-1.5 rounded-lg transition-colors ${u.is_banned?'hover:bg-green-900/30 text-gray-400 hover:text-green-400':'hover:bg-red-900/30 text-gray-400 hover:text-red-400'}`}>
                                 <Ban className="w-3.5 h-3.5" />
+                              </button>
+                              <button onClick={() => deleteUser(u.id, u.name)} title="Delete user"
+                                className="p-1.5 rounded-lg hover:bg-red-900/30 text-gray-400 hover:text-red-400 transition-colors">
+                                <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </div>
                           </td>
@@ -953,7 +979,7 @@ export default function AdminDashboard() {
                 <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5 space-y-4">
                   <h2 className="font-bold text-white text-sm flex items-center gap-2"><Building2 className="w-4 h-4 text-green-400" /> Platform Info</h2>
                   {[
-                    { label:'Platform Name', value:'CodeArena' },
+                    { label:'Platform Name', value:'DevixCode' },
                     { label:'Version',       value:'1.0.0' },
                     { label:'Environment',   value:'Production' },
                     { label:'Database',      value:'MySQL (MariaDB)' },

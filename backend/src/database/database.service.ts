@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS users (
   kyc_status       TEXT DEFAULT 'none',
   total_earnings   REAL DEFAULT 0,
   preferred_currency TEXT DEFAULT 'USD',
+  email_verified   INTEGER DEFAULT 0,
   avatar_url       TEXT,
   bio              TEXT,
   created_at       TEXT DEFAULT (datetime('now')),
@@ -324,6 +325,26 @@ CREATE TABLE IF NOT EXISTS kyc_documents (
   submitted_at  TEXT DEFAULT (datetime('now')),
   reviewed_at   TEXT,
   FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS email_verifications (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL,
+  email      TEXT NOT NULL,
+  otp_code   TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  used       INTEGER DEFAULT 0,
+  created_at TEXT DEFAULT (datetime('now')),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS password_resets (
+  id         TEXT PRIMARY KEY,
+  email      TEXT NOT NULL,
+  otp_code   TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  used       INTEGER DEFAULT 0,
+  created_at TEXT DEFAULT (datetime('now'))
 );
 
 -- Indexes
@@ -1088,8 +1109,15 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
 
     this.db = new Database(dbPath);
     this.db.exec(SCHEMA);
+    // Migration: add email_verified to existing databases
+    try { this.db.exec('ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 0'); } catch {}
     this.db.exec(SEED);
     this.db.exec(CHALLENGES_SEED);
+    // Mark pre-seeded users as verified
+    this.db.exec(`UPDATE users SET email_verified = 1 WHERE id IN (
+      'admin-00000000-0000-0000-0000-000000000001',
+      'user-test-00000000-0000-0000-000000000001'
+    )`);
     this.logger.log(`SQLite ready: ${dbPath}`);
   }
 

@@ -430,8 +430,8 @@ export default function WalletPage() {
                 <p className="text-white font-semibold">Bank Transfer Details</p>
                 <div className="space-y-2 text-sm">
                   {[
-                    ['Bank', 'CodeArena Financial Services'],
-                    ['Account Name', 'CodeArena Global Ltd'],
+                    ['Bank', 'DevixCode Financial Services'],
+                    ['Account Name', 'DevixCode Global Ltd'],
                     ['Account Number', '0012345678'],
                     ['Swift/BIC', 'CODARGLX'],
                     ['IBAN', 'GB29NWBK60161331926819'],
