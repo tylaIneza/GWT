@@ -8,8 +8,10 @@
     "dev": "nodemon src/index.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
     "dockerode": "^4.0.2",
+    "express": "^4.18.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.3",
     "uuid": "^9.0.1"
   },
   "devDependencies": {

@@ -13,9 +13,120 @@ import {
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
 
+export const LANGUAGES = [
+  { id: 'javascript', label: 'JavaScript', monaco: 'javascript', available: true  },
+  { id: 'typescript', label: 'TypeScript', monaco: 'typescript', available: true  },
+  { id: 'python',     label: 'Python',     monaco: 'python',     available: true  },
+  { id: 'java',       label: 'Java',       monaco: 'java',       available: true  },
+  { id: 'cpp',        label: 'C++',        monaco: 'cpp',        available: true  },
+  { id: 'swift',      label: 'Swift',      monaco: 'swift',      available: true  },
+  { id: 'ruby',       label: 'Ruby',       monaco: 'ruby',       available: true  },
+  { id: 'go',         label: 'Go',         monaco: 'go',         available: false },
+  { id: 'rust',       label: 'Rust',       monaco: 'rust',       available: false },
+  { id: 'kotlin',     label: 'Kotlin',     monaco: 'kotlin',     available: false },
+  { id: 'csharp',     label: 'C#',         monaco: 'csharp',     available: false },
+  { id: 'php',        label: 'PHP',        monaco: 'php',        available: false },
+];
+
 const TEMPLATES: Record<string, string> = {
-  javascript: `// Write your solution below\n// Read input from process.stdin\n\nconst lines = require('fs').readFileSync('/dev/stdin', 'utf8').trim().split('\\n');\n\nfunction solve(input) {\n  // Your logic here\n  return input;\n}\n\nconsole.log(solve(lines[0]));`,
-  python:     `# Write your solution below\nimport sys\n\ndef solve(input_data):\n    # Your logic here\n    return input_data\n\ndata = sys.stdin.read().strip()\nprint(solve(data))`,
+  javascript: `const lines = require('fs').readFileSync('/dev/stdin','utf8').trim().split('\\n');
+// Parse input and write your solution
+function solve(lines) {
+  // your logic here
+  return lines[0];
+}
+console.log(solve(lines));`,
+
+  typescript: `import * as fs from 'fs';
+const lines = fs.readFileSync('/dev/stdin','utf8').trim().split('\\n');
+function solve(lines: string[]): string {
+  // your logic here
+  return lines[0];
+}
+console.log(solve(lines));`,
+
+  python: `import sys
+lines = sys.stdin.read().strip().split('\\n')
+def solve(lines):
+    # your logic here
+    return lines[0]
+print(solve(lines))`,
+
+  java: `import java.util.*;
+public class Solution {
+    public static void main(String[] args) {
+        Scanner sc = new Scanner(System.in);
+        // read input with sc.nextLine(), sc.nextInt(), etc.
+        String line = sc.nextLine();
+        // your logic here
+        System.out.println(line);
+    }
+}`,
+
+  cpp: `#include <bits/stdc++.h>
+using namespace std;
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(NULL);
+    string line;
+    getline(cin, line);
+    // your logic here
+    cout << line << endl;
+    return 0;
+}`,
+
+  csharp: `using System;
+using System.IO;
+class Solution {
+    static void Main() {
+        string line = Console.ReadLine();
+        // your logic here
+        Console.WriteLine(line);
+    }
+}`,
+
+  php: `<?php
+$lines = explode("\\n", trim(file_get_contents("php://stdin")));
+// your logic here
+echo $lines[0] . "\\n";`,
+
+  go: `package main
+import (
+    "bufio"
+    "fmt"
+    "os"
+)
+func main() {
+    reader := bufio.NewReader(os.Stdin)
+    line, _ := reader.ReadString('\\n')
+    // your logic here
+    fmt.Println(line)
+}`,
+
+  rust: `use std::io::{self, BufRead};
+fn main() {
+    let stdin = io::stdin();
+    let line = stdin.lock().lines().next().unwrap().unwrap();
+    // your logic here
+    println!("{}", line);
+}`,
+
+  swift: `import Foundation
+let lines = AnyIterator { readLine() }.prefix(1000).compactMap { $0 }
+// your logic here
+if let first = lines.first { print(first) }`,
+
+  kotlin: `import java.util.Scanner
+fun main() {
+    val sc = Scanner(System.`in`)
+    val line = sc.nextLine()
+    // your logic here
+    println(line)
+}`,
+
+  ruby: `lines = $stdin.read.strip.split("\\n")
+# your logic here
+puts lines[0]`,
 };
 
 const DIFF_BADGE: Record<string, string>      = { easy: 'badge-green', medium: 'badge-yellow', hard: 'badge-red' };
@@ -522,9 +633,11 @@ export default function ChallengePage() {
 
               <select value={language} onChange={e => onLanguageChange(e.target.value)}
                 disabled={!betReady || timedOut}
-                className="bg-gray-800 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-green-500 disabled:opacity-40">
-                {(challenge.supported_languages || ['javascript']).map((l: string) => (
-                  <option key={l} value={l}>{l}</option>
+                className="bg-gray-800 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-green-500 disabled:opacity-40 min-w-[130px]">
+                {LANGUAGES.map(l => (
+                  <option key={l.id} value={l.id} disabled={!l.available}>
+                    {l.label}{!l.available ? ' (soon)' : ''}
+                  </option>
                 ))}
               </select>
             </div>
