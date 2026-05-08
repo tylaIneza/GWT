@@ -79,21 +79,20 @@ export class PaymentsService {
     if (amount < 1000) throw new BadRequestException('Minimum withdrawal is 1,000 RWF');
     const reference = `WD-${uuid()}`;
 
-    return this.db.transaction(async (conn) => {
-      await this.wallet.debit(userId, amount, 'withdrawal', reference, provider, null, {}, conn);
-      let providerRef: string;
-      try {
-        if (provider === 'mtn') {
-          providerRef = await this.mtn.disburse(amount, phone, reference);
-        } else {
-          providerRef = await this.airtel.disburse(amount, phone, reference);
-        }
-      } catch (err) {
-        await this.wallet.credit(userId, amount, 'refund', `REF-${reference}`, 'internal', null, { reason: 'disbursement_failed' }, conn);
-        throw err;
+    // Debit wallet first, then call provider (refund on failure)
+    await this.wallet.debit(userId, amount, 'withdrawal', reference, provider, undefined, {});
+    let providerRef: string;
+    try {
+      if (provider === 'mtn') {
+        providerRef = await this.mtn.disburse(amount, phone, reference);
+      } else {
+        providerRef = await this.airtel.disburse(amount, phone, reference);
       }
-      return { reference, provider_ref: providerRef, message: 'Withdrawal initiated' };
-    });
+    } catch (err) {
+      await this.wallet.credit(userId, amount, 'refund', `REF-${reference}`, 'internal', undefined, { reason: 'disbursement_failed' });
+      throw err;
+    }
+    return { reference, provider_ref: providerRef, message: 'Withdrawal initiated' };
   }
 
   // ─── Stripe ─────────────────────────────────────────────────
