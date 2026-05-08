@@ -3,6 +3,11 @@ export const setAuth = (token: string, user: any) => {
   localStorage.setItem('gwt_user', JSON.stringify(user));
 };
 
+export const updateUser = (user: any) => {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem('gwt_user', JSON.stringify(user));
+};
+
 export const clearAuth = () => {
   localStorage.removeItem('gwt_token');
   localStorage.removeItem('gwt_user');

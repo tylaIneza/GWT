@@ -2,9 +2,10 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
-import { getUser, clearAuth } from '@/lib/auth';
+import { getUser, clearAuth, updateUser } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n-context';
 import { LANGUAGES, CURRENCIES, COUNTRIES } from '@/lib/i18n';
+import api from '@/lib/api';
 import { Code2, Trophy, LayoutDashboard, Wallet, LogOut, Settings, Users, Globe } from 'lucide-react';
 
 export default function Navbar() {
@@ -14,11 +15,19 @@ export default function Navbar() {
   const [user,       setUser]       = useState<any>(null);
   const [showLang,   setShowLang]   = useState(false);
 
-  useEffect(() => { setUser(getUser()); }, []);
+  useEffect(() => {
+    const cached = getUser();
+    if (cached) setUser(cached);
+    // Refresh from server so balance + currency are always fresh
+    api.get('/auth/me').then(r => {
+      setUser(r.data);
+      updateUser(r.data);
+    }).catch(() => {});
+  }, [path]); // re-fetch on every page navigation
 
   const logout = () => { clearAuth(); setUser(null); router.push('/'); };
 
-  const currency = user?.preferred_currency || COUNTRIES.find(c => c.code === user?.country_code)?.currency || 'USD';
+  const currency = user?.currency || user?.preferred_currency || COUNTRIES.find(c => c.code === user?.country_code)?.currency || 'USD';
   const symbol   = CURRENCIES[currency]?.symbol || '$';
 
   const links = [

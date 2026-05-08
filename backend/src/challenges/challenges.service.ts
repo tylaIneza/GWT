@@ -147,9 +147,9 @@ export class ChallengesService {
          )
          AND c.id NOT IN (
            SELECT cs.challenge_id FROM challenge_sessions cs
-           WHERE cs.status = 'active' AND cs.user_id != ? AND cs.expires_at > NOW()
+           WHERE cs.status = 'active' AND cs.user_id != ? AND cs.expires_at > datetime('now')
          )
-       ORDER BY RAND()
+       ORDER BY RANDOM()
        LIMIT 1`,
       [userId, userId],
     );

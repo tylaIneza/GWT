@@ -293,7 +293,7 @@ export default function ChallengePage() {
                   <h2 className="text-xl font-black text-white leading-tight">{challenge.title}</h2>
                   <div className="flex items-center gap-1.5 mt-2 text-gray-400 text-xs">
                     <Timer className="w-3.5 h-3.5 text-orange-400" />
-                    <span>You'll have <strong className="text-orange-300">5 minutes</strong> to solve after starting</span>
+                    <span>You'll have <strong className="text-orange-300">3 minutes</strong> to solve after starting</span>
                   </div>
                 </div>
                 <Coins className={`w-7 h-7 shrink-0 mt-1 ${DIFF_ACCENT[diff]}`} />
@@ -302,7 +302,7 @@ export default function ChallengePage() {
 
             <div className="px-6 py-5 space-y-5">
               <p className="text-gray-400 text-sm">
-                Place a bet before you start. If you solve it within 5 minutes you earn{' '}
+                Place a bet before you start. If you solve it within 3 minutes you earn{' '}
                 <span className={`font-bold ${DIFF_ACCENT[diff]}`}>{multiplier}× your bet</span>.
                 If you fail or run out of time, the bet goes to the platform.
               </p>
@@ -485,7 +485,7 @@ export default function ChallengePage() {
                 <div className="text-6xl mb-2">⏰</div>
                 <h2 className="text-4xl font-black text-red-400">Time's Up!</h2>
                 <p className="text-gray-400 text-sm">
-                  {activeBet ? 'Your bet has been forfeited to the platform.' : 'The 5-minute window has ended.'}
+                  {activeBet ? 'Your bet has been forfeited to the platform.' : 'The 3-minute window has ended.'}
                 </p>
                 <div className="flex gap-3 justify-center mt-6">
                   <button onClick={() => router.push('/challenges')}

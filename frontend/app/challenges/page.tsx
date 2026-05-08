@@ -61,7 +61,7 @@ export default function ChallengesPage() {
             <h1 className="text-2xl font-bold text-white">Challenges</h1>
             <p className="text-gray-500 text-sm mt-1 flex items-center gap-1.5">
               <Timer className="w-3.5 h-3.5 text-orange-400" />
-              5-minute timer · Bet to earn multiplied rewards
+              3-minute timer · Bet to earn multiplied rewards
             </p>
           </div>
           {challenges.length > 0 && (

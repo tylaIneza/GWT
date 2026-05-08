@@ -68,8 +68,9 @@ export class AuthService {
   async me(userId: string) {
     return this.db.queryOne(
       `SELECT u.id, u.name, u.email, u.role, u.phone, u.country_code,
-              u.risk_score, u.total_earnings, u.kyc_verified, u.created_at,
-              w.balance, w.currency
+              u.language, u.preferred_currency, u.risk_score,
+              u.total_earnings, u.kyc_verified, u.created_at,
+              w.balance, w.currency, w.locked_balance
        FROM users u LEFT JOIN wallets w ON w.user_id = u.id
        WHERE u.id = ?`,
       [userId],

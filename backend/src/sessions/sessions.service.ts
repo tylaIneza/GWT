@@ -3,7 +3,7 @@ import { v4 as uuid } from 'uuid';
 import { DatabaseService } from '../database/database.service';
 import { BetsService }    from '../bets/bets.service';
 
-const SESSION_MS = 5 * 60 * 1000; // 5 minutes
+const SESSION_MS = 3 * 60 * 1000; // 3 minutes
 
 @Injectable()
 export class SessionsService {
@@ -34,9 +34,9 @@ export class SessionsService {
     const sessionId = uuid();
     const expiresAt = new Date(Date.now() + SESSION_MS);
     await this.db.execute(
-      `INSERT INTO challenge_sessions (id, user_id, challenge_id, started_at, expires_at)
-       VALUES (?,?,?,NOW(),?)`,
-      [sessionId, userId, challengeId, expiresAt.toISOString().slice(0,19).replace('T',' ')],
+      `INSERT INTO challenge_sessions (id, user_id, challenge_id, expires_at)
+       VALUES (?,?,?,?)`,
+      [sessionId, userId, challengeId, expiresAt.toISOString()],
     );
     return { session_id: sessionId, expires_at: expiresAt.toISOString(), resumed: false };
   }
