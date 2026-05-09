@@ -11,6 +11,7 @@ import { AntiCheatService }   from '../anti-cheat/anti-cheat.service';
 import { SubmitDto }          from './dto/submit.dto';
 import { BetsService }        from '../bets/bets.service';
 import { SessionsService }    from '../sessions/sessions.service';
+import { AiService }          from '../ai/ai.service';
 
 @Injectable()
 export class SubmissionsService {
@@ -24,6 +25,7 @@ export class SubmissionsService {
     private http:       HttpService,
     private bets:       BetsService,
     private sessions:   SessionsService,
+    private ai:         AiService,
   ) {}
 
   async submit(dto: SubmitDto, userId: string, ip: string, userAgent: string) {
@@ -178,7 +180,20 @@ export class SubmissionsService {
       time_ms:    r.timeMs,
     }));
 
-    return { id: subId, status, score, passed, total, results: sampleResults, risk_score: riskScore, time_ms: execResult.timeMs, bet: betResult };
+    // Generate AI feedback automatically (non-blocking — runs in background)
+    const aiFeedback = await this.ai.generateFeedback({
+      challengeTitle:       challenge.title,
+      challengeDescription: challenge.description,
+      language:             dto.language,
+      code:                 dto.code,
+      status,
+      score,
+      passed,
+      total,
+      testResults:          sampleResults,
+    }).catch(() => null);
+
+    return { id: subId, status, score, passed, total, results: sampleResults, risk_score: riskScore, time_ms: execResult.timeMs, bet: betResult, ai_feedback: aiFeedback };
   }
 
   async findByUser(userId: string, challengeId?: string) {

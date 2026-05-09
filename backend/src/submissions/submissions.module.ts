@@ -6,9 +6,10 @@ import { ChallengesModule }      from '../challenges/challenges.module';
 import { AntiCheatModule }       from '../anti-cheat/anti-cheat.module';
 import { BetsModule }            from '../bets/bets.module';
 import { SessionsModule }        from '../sessions/sessions.module';
+import { AiModule }              from '../ai/ai.module';
 
 @Module({
-  imports:     [HttpModule, ChallengesModule, AntiCheatModule, BetsModule, SessionsModule],
+  imports:     [HttpModule, ChallengesModule, AntiCheatModule, BetsModule, SessionsModule, AiModule],
   controllers: [SubmissionsController],
   providers:   [SubmissionsService],
   exports:     [SubmissionsService],
