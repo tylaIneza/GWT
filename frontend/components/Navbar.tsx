@@ -6,7 +6,7 @@ import { getUser, clearAuth, updateUser } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n-context';
 import { LANGUAGES, CURRENCIES, COUNTRIES } from '@/lib/i18n';
 import api from '@/lib/api';
-import { Code2, Trophy, LayoutDashboard, Wallet, LogOut, Settings, Users, Globe } from 'lucide-react';
+import { Code2, Trophy, LayoutDashboard, Wallet, LogOut, Settings, Users, Globe, Star, User } from 'lucide-react';
 
 export default function Navbar() {
   const router   = useRouter();
@@ -35,7 +35,8 @@ export default function Navbar() {
     { href: '/challenges',  label: t('nav_challenges'),  icon: Code2           },
     { href: '/contests',    label: t('nav_contests'),    icon: Trophy          },
     { href: '/leaderboard', label: t('nav_leaderboard'), icon: Users           },
-    { href: '/wallet',      label: t('nav_wallet'),      icon: Wallet          },
+    { href: '/wallet',       label: t('nav_wallet'),      icon: Wallet          },
+    { href: '/subscription', label: 'Plans',              icon: Star            },
     ...(user?.role === 'admin' ? [{ href: '/admin', label: t('nav_admin'), icon: Settings }] : []),
   ];
 
@@ -98,12 +99,17 @@ export default function Navbar() {
 
           {/* Avatar */}
           {user && (
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-green-600 to-emerald-700 flex items-center justify-center text-xs font-bold text-white">
+            <Link href={`/profile/${user.id}`} className="flex items-center gap-2 hover:opacity-80 transition-opacity">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center text-xs font-bold text-white">
                 {user?.name?.charAt(0)?.toUpperCase()}
               </div>
-              <span className="text-sm text-gray-300 hidden lg:block">{user?.name}</span>
-            </div>
+              <div className="hidden lg:block text-left">
+                <p className="text-xs text-gray-300 font-semibold leading-tight">{user?.name}</p>
+                {user.current_streak > 0 && (
+                  <p className="text-xs text-orange-400 flex items-center gap-0.5">🔥 {user.current_streak}d streak</p>
+                )}
+              </div>
+            </Link>
           )}
 
           <button onClick={logout} className="p-2 text-gray-500 hover:text-red-400 hover:bg-red-900/20 rounded-lg transition-colors" title="Logout">

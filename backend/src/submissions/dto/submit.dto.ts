@@ -1,16 +1,20 @@
 import { IsString, IsUUID, IsOptional, IsIn, IsObject } from 'class-validator';
 
-export class SubmitDto {
-  @IsUUID()   challenge_id: string;
-  @IsString() @IsIn(['javascript', 'python']) language: string;
-  @IsString() code: string;
-  @IsUUID()   @IsOptional() contest_id?: string;
+const SUPPORTED_LANGUAGES = [
+  'javascript', 'typescript', 'python', 'java', 'cpp', 'csharp',
+  'php', 'go', 'rust', 'swift', 'kotlin', 'ruby',
+];
 
-  // Anti-cheat metadata from frontend
+export class SubmitDto {
+  @IsString()   challenge_id: string;
+  @IsString() @IsIn(SUPPORTED_LANGUAGES) language: string;
+  @IsString()   code: string;
+  @IsUUID()     @IsOptional() contest_id?: string;
+
   @IsObject() @IsOptional() typing_stats?: {
-    keystrokes:        number;
-    paste_count:       number;
+    keystrokes:         number;
+    paste_count:        number;
     time_to_first_char: number;
-    total_time_ms:     number;
+    total_time_ms:      number;
   };
 }

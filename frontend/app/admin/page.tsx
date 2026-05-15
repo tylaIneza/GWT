@@ -24,7 +24,7 @@ const CartesianGrid= dynamic(() => import('recharts').then(m => ({ default: m.Ca
 const Tooltip      = dynamic(() => import('recharts').then(m => ({ default: m.Tooltip      })), { ssr: false });
 const ResponsiveContainer = dynamic(() => import('recharts').then(m => ({ default: m.ResponsiveContainer })), { ssr: false });
 
-type View = 'overview'|'users'|'financial'|'challenges'|'contests'|'anticheat'|'system';
+type View = 'overview'|'users'|'financial'|'challenges'|'contests'|'anticheat'|'withdrawals'|'rewards'|'import'|'ailogs'|'system';
 
 // ── Generate synthetic trend data ────────────────────────────────────────────
 function genDays(n: number, base: number, variance: number) {
@@ -106,8 +106,14 @@ export default function AdminDashboard() {
   const [chartData,  setChartData]  = useState<any[]>([]);
   const [loading,    setLoading]    = useState<Record<View,boolean>>({
     overview:true, users:false, financial:false, challenges:false,
-    contests:false, anticheat:false, system:false,
+    contests:false, anticheat:false, withdrawals:false, rewards:false, import:false, ailogs:false, system:false,
   });
+  const [withdrawals,   setWithdrawals]   = useState<any[]>([]);
+  const [rewardSettings,setRewardSettings]= useState<any[]>([]);
+  const [aiLogs,        setAiLogs]        = useState<any[]>([]);
+  const [importFile,    setImportFile]    = useState<File | null>(null);
+  const [importResult,  setImportResult]  = useState<any>(null);
+  const [importLoading, setImportLoading] = useState(false);
 
   // User table state
   const [userSearch, setUserSearch] = useState('');
@@ -201,13 +207,72 @@ export default function AdminDashboard() {
     catch {} setLoad('financial', false);
   };
 
+  const loadWithdrawals = async () => {
+    setLoad('withdrawals', true);
+    try { const r = await api.get('/admin/withdrawals'); setWithdrawals(r.data || []); }
+    catch {} setLoad('withdrawals', false);
+  };
+
+  const loadRewards = async () => {
+    setLoad('rewards', true);
+    try { const r = await api.get('/admin/rewards'); setRewardSettings(r.data || []); }
+    catch {} setLoad('rewards', false);
+  };
+
+  const loadAiLogs = async () => {
+    setLoad('ailogs', true);
+    try { const r = await api.get('/admin/ai-logs'); setAiLogs(r.data || []); }
+    catch {} setLoad('ailogs', false);
+  };
+
+  const approveWithdrawal = async (id: string) => {
+    try {
+      await api.post(`/admin/withdrawals/${id}/approve`);
+      notify('Withdrawal approved');
+      loadWithdrawals();
+    } catch (e: any) { notify(e.response?.data?.message || 'Failed'); }
+  };
+
+  const rejectWithdrawal = async (id: string) => {
+    const reason = prompt('Rejection reason:');
+    if (!reason) return;
+    try {
+      await api.post(`/admin/withdrawals/${id}/reject`, { reason });
+      notify('Withdrawal rejected'); loadWithdrawals();
+    } catch (e: any) { notify(e.response?.data?.message || 'Failed'); }
+  };
+
+  const updateReward = async (difficulty: string, amount: number) => {
+    try {
+      await api.put(`/admin/rewards/${difficulty}`, { amount });
+      notify(`${difficulty} reward updated to $${amount}`); loadRewards();
+    } catch (e: any) { notify(e.response?.data?.message || 'Failed'); }
+  };
+
+  const handleImport = async () => {
+    if (!importFile) return;
+    setImportLoading(true); setImportResult(null);
+    const fd = new FormData();
+    fd.append('file', importFile);
+    try {
+      const r = await api.post('/admin/challenges/import', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setImportResult(r.data); notify(`Imported ${r.data.inserted} challenges`);
+    } catch (e: any) { notify(e.response?.data?.message || 'Import failed'); }
+    finally { setImportLoading(false); }
+  };
+
   const switchView = (v: View) => {
     setView(v);
-    if (v === 'users')     loadUsers();
-    if (v === 'challenges') loadChallenges();
-    if (v === 'contests')   loadContests();
-    if (v === 'anticheat')  loadAntiCheat();
-    if (v === 'financial')  loadFinancial();
+    if (v === 'users')        loadUsers();
+    if (v === 'challenges')   loadChallenges();
+    if (v === 'contests')     loadContests();
+    if (v === 'anticheat')    loadAntiCheat();
+    if (v === 'financial')    loadFinancial();
+    if (v === 'withdrawals')  loadWithdrawals();
+    if (v === 'rewards')      loadRewards();
+    if (v === 'ailogs')       loadAiLogs();
   };
 
   // Challenge CRUD
@@ -353,13 +418,17 @@ export default function AdminDashboard() {
 
   // ── Sidebar nav items
   const nav = [
-    { key: 'overview',   label: t('adm_overview'),   icon: LayoutDashboard },
-    { key: 'users',      label: t('adm_users'),       icon: Users           },
-    { key: 'financial',  label: t('adm_financial'),   icon: Wallet          },
-    { key: 'challenges', label: t('adm_challenges'),  icon: Code2           },
-    { key: 'contests',   label: t('adm_contests'),    icon: Trophy          },
-    { key: 'anticheat',  label: t('adm_anticheat'),   icon: ShieldAlert     },
-    { key: 'system',     label: t('adm_system'),      icon: Settings        },
+    { key: 'overview',     label: t('adm_overview'),   icon: LayoutDashboard },
+    { key: 'users',        label: t('adm_users'),       icon: Users           },
+    { key: 'financial',    label: t('adm_financial'),   icon: Wallet          },
+    { key: 'withdrawals',  label: 'Withdrawals',        icon: ArrowUpRight    },
+    { key: 'rewards',      label: 'Reward Settings',    icon: DollarSign      },
+    { key: 'challenges',   label: t('adm_challenges'),  icon: Code2           },
+    { key: 'import',       label: 'Import Challenges',  icon: Download        },
+    { key: 'contests',     label: t('adm_contests'),    icon: Trophy          },
+    { key: 'anticheat',    label: t('adm_anticheat'),   icon: ShieldAlert     },
+    { key: 'ailogs',       label: 'AI Logs',            icon: Zap             },
+    { key: 'system',       label: t('adm_system'),      icon: Settings        },
   ] as const;
 
   return (
@@ -1033,6 +1102,250 @@ export default function AdminDashboard() {
               </div>
             </div>
           )}
+
+          {/* ══════════ WITHDRAWALS ══════════ */}
+          {view === 'withdrawals' && (
+            <div className="space-y-5">
+              <h1 className="text-xl font-black text-white flex items-center gap-2">
+                <ArrowUpRight className="w-5 h-5 text-amber-400" /> Withdrawal Requests
+              </h1>
+              {loading.withdrawals ? (
+                <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="card p-4 animate-pulse h-14" />)}</div>
+              ) : (
+                <div className="card overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead className="border-b border-gray-800">
+                      <tr>
+                        {['User','Amount','Method','Account','Status','Date','Actions'].map(h => (
+                          <th key={h} className="text-left px-4 py-3 text-xs text-gray-500 font-semibold uppercase">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-800">
+                      {withdrawals.map((w: any) => (
+                        <tr key={w.id} className="hover:bg-gray-800/20">
+                          <td className="px-4 py-3">
+                            <p className="text-sm text-white font-medium">{w.user_name}</p>
+                            <p className="text-xs text-gray-500">{w.user_email}</p>
+                          </td>
+                          <td className="px-4 py-3 text-green-400 font-bold">${Number(w.amount).toFixed(2)}</td>
+                          <td className="px-4 py-3 text-gray-300 capitalize">{w.method}</td>
+                          <td className="px-4 py-3">
+                            <span className="text-xs font-mono text-gray-400">
+                              {typeof w.account_details === 'object' ? w.account_details.account : w.account_details}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={`badge text-xs ${w.status==='approved'?'badge-green':w.status==='rejected'?'bg-red-900/30 text-red-400':'badge-yellow'}`}>
+                              {w.status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-xs text-gray-500">{new Date(w.created_at).toLocaleDateString()}</td>
+                          <td className="px-4 py-3">
+                            {w.status === 'pending' && (
+                              <div className="flex gap-2">
+                                <button onClick={() => approveWithdrawal(w.id)}
+                                  className="px-3 py-1 bg-green-700 hover:bg-green-600 text-white text-xs rounded-lg font-semibold transition-colors">
+                                  Approve
+                                </button>
+                                <button onClick={() => rejectWithdrawal(w.id)}
+                                  className="px-3 py-1 bg-red-800 hover:bg-red-700 text-white text-xs rounded-lg font-semibold transition-colors">
+                                  Reject
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {withdrawals.length === 0 && (
+                    <div className="p-12 text-center text-gray-500">No withdrawal requests</div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ══════════ REWARD SETTINGS ══════════ */}
+          {view === 'rewards' && (
+            <div className="space-y-5">
+              <h1 className="text-xl font-black text-white flex items-center gap-2">
+                <DollarSign className="w-5 h-5 text-green-400" /> Reward Settings
+              </h1>
+              <p className="text-gray-500 text-sm">Configure how much users earn per difficulty level. Changes take effect immediately.</p>
+              {loading.rewards ? (
+                <div className="space-y-2">{[1,2,3].map(i=><div key={i} className="card p-4 animate-pulse h-16"/>)}</div>
+              ) : (
+                <div className="space-y-4 max-w-xl">
+                  {rewardSettings.length === 0 && (
+                    <div className="card p-6 text-gray-500 text-sm">No reward settings found. They will be initialized on first submission.</div>
+                  )}
+                  {['easy','medium','hard'].map(diff => {
+                    const rs = rewardSettings.find((r:any) => r.difficulty === diff);
+                    const defaultAmt = diff === 'easy' ? 5 : diff === 'medium' ? 15 : 40;
+                    const currentAmt = rs?.amount_usd ?? defaultAmt;
+                    return (
+                      <div key={diff} className="card p-5">
+                        <div className="flex items-center justify-between mb-3">
+                          <div>
+                            <span className={`badge text-sm font-bold capitalize ${diff==='easy'?'text-green-400 bg-green-900/30':diff==='medium'?'text-yellow-400 bg-yellow-900/30':'text-red-400 bg-red-900/30'}`}>
+                              {diff}
+                            </span>
+                          </div>
+                          <span className="text-lg font-black text-white">${currentAmt}</span>
+                        </div>
+                        <div className="flex gap-3 items-center">
+                          <input type="number" defaultValue={currentAmt} id={`reward-${diff}`}
+                            className="input flex-1" min={0.5} step={0.5} />
+                          <button
+                            onClick={() => {
+                              const el = document.getElementById(`reward-${diff}`) as HTMLInputElement;
+                              updateReward(diff, Number(el.value));
+                            }}
+                            className="btn-primary px-4 py-2 shrink-0">
+                            Save
+                          </button>
+                        </div>
+                        {rs && (
+                          <p className="text-xs text-gray-600 mt-2">
+                            Last updated: {new Date(rs.updated_at).toLocaleString()}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                  <div className="card p-4 bg-blue-900/10 border-blue-800/30">
+                    <p className="text-xs text-blue-300">
+                      💡 Pro subscribers get ×1.5 multiplier, Elite get ×2.0. These base amounts are for Free users.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ══════════ IMPORT CHALLENGES ══════════ */}
+          {view === 'import' && (
+            <div className="space-y-5">
+              <h1 className="text-xl font-black text-white flex items-center gap-2">
+                <Download className="w-5 h-5 text-blue-400" /> Import Challenges
+              </h1>
+              <div className="card p-6 max-w-xl space-y-5">
+                <div>
+                  <p className="text-gray-300 font-semibold mb-2">Upload CSV, Excel (.xlsx), or JSON file</p>
+                  <p className="text-xs text-gray-500 mb-4">
+                    Required columns: <code className="bg-gray-800 px-1 rounded">title</code>, <code className="bg-gray-800 px-1 rounded">description</code>, <code className="bg-gray-800 px-1 rounded">difficulty</code> (easy/medium/hard).
+                    Optional: <code className="bg-gray-800 px-1 rounded">category</code>, <code className="bg-gray-800 px-1 rounded">languages</code> (comma-separated), <code className="bg-gray-800 px-1 rounded">sample_input</code>, <code className="bg-gray-800 px-1 rounded">sample_output</code>.
+                  </p>
+                  <div className="border-2 border-dashed border-gray-700 rounded-xl p-8 text-center hover:border-gray-600 transition-colors">
+                    <input type="file" accept=".csv,.xlsx,.xls,.json"
+                      onChange={e => setImportFile(e.target.files?.[0] || null)}
+                      className="hidden" id="import-file" />
+                    <label htmlFor="import-file" className="cursor-pointer">
+                      <Download className="w-10 h-10 text-gray-600 mx-auto mb-3" />
+                      <p className="text-gray-400 text-sm">
+                        {importFile ? importFile.name : 'Click to select file or drag & drop'}
+                      </p>
+                      {importFile && <p className="text-xs text-gray-600 mt-1">{(importFile.size / 1024).toFixed(1)} KB</p>}
+                    </label>
+                  </div>
+                </div>
+
+                <button onClick={handleImport} disabled={!importFile || importLoading}
+                  className="btn-primary w-full justify-center py-3">
+                  {importLoading ? (
+                    <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Importing...</>
+                  ) : (
+                    <>Import Challenges</>
+                  )}
+                </button>
+
+                {importResult && (
+                  <div className={`p-4 rounded-xl text-sm space-y-1 ${importResult.error ? 'bg-red-900/20 text-red-400 border border-red-800' : 'bg-green-900/20 text-green-300 border border-green-800'}`}>
+                    {importResult.error ? (
+                      <p>{importResult.error}</p>
+                    ) : (
+                      <>
+                        <p className="font-bold">Import complete!</p>
+                        <p>✅ Inserted: {importResult.inserted}</p>
+                        <p>⏭️ Skipped (duplicates): {importResult.skipped}</p>
+                        {importResult.errors?.length > 0 && (
+                          <p>❌ Errors: {importResult.errors.length}</p>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+
+                <div className="border-t border-gray-800 pt-4">
+                  <p className="text-xs text-gray-500 font-semibold uppercase mb-2">Sample JSON format</p>
+                  <pre className="text-xs text-gray-400 bg-gray-800 p-3 rounded-xl overflow-x-auto">{JSON.stringify([{
+                    title: "Hello World",
+                    description: "Print Hello World",
+                    difficulty: "easy",
+                    category: "strings",
+                    languages: "javascript,python,java",
+                    sample_input: "",
+                    sample_output: "Hello World"
+                  }], null, 2)}</pre>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ══════════ AI LOGS ══════════ */}
+          {view === 'ailogs' && (
+            <div className="space-y-5">
+              <h1 className="text-xl font-black text-white flex items-center gap-2">
+                <Zap className="w-5 h-5 text-purple-400" /> AI Validation Logs
+              </h1>
+              {loading.ailogs ? (
+                <div className="space-y-2">{[1,2,3].map(i=><div key={i} className="card p-4 animate-pulse h-14"/>)}</div>
+              ) : (
+                <div className="card overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead className="border-b border-gray-800">
+                      <tr>
+                        {['User','Challenge','Difficulty','AI Score','Status','Model','Date'].map(h=>(
+                          <th key={h} className="text-left px-4 py-3 text-xs text-gray-500 font-semibold uppercase">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-800">
+                      {aiLogs.map((l: any) => (
+                        <tr key={l.id} className="hover:bg-gray-800/20">
+                          <td className="px-4 py-3 text-sm text-white">{l.user_name}</td>
+                          <td className="px-4 py-3 text-sm text-gray-300">{l.challenge_title}</td>
+                          <td className="px-4 py-3">
+                            <span className={`badge text-xs capitalize ${l.difficulty==='easy'?'text-green-400':l.difficulty==='medium'?'text-yellow-400':'text-red-400'}`}>
+                              {l.difficulty}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={`font-bold ${(l.ai_score||0)>=80?'text-green-400':(l.ai_score||0)>=50?'text-yellow-400':'text-red-400'}`}>
+                              {l.ai_score ?? 'N/A'}%
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={`badge text-xs ${l.ai_status==='accepted'?'badge-green':l.ai_status?.includes('error')?'text-red-400':'badge-yellow'}`}>
+                              {l.ai_status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-xs text-gray-500">{l.model_used || 'gemini-1.5-flash'}</td>
+                          <td className="px-4 py-3 text-xs text-gray-500">{new Date(l.created_at).toLocaleDateString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {aiLogs.length === 0 && (
+                    <div className="p-12 text-center text-gray-500">No AI validation logs yet</div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
         </main>
       </div>
 

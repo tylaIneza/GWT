@@ -5,30 +5,51 @@ import Link from 'next/link';
 import Navbar from '@/components/Navbar';
 import api from '@/lib/api';
 import { getToken } from '@/lib/auth';
-import { useI18n } from '@/lib/i18n-context';
-import { Trophy, Users, Clock } from 'lucide-react';
+import { Trophy, Users, Clock, ArrowRight, Zap, Calendar, Lock, CheckCircle, Star } from 'lucide-react';
 
-function CountDown({ end }: { end: string }) {
-  const [left, setLeft] = useState('');
+const STATUS_CONFIG: Record<string, { label: string; badge: string; dot: string; glow: string }> = {
+  active:    { label: 'Live',      badge: 'bg-green-900/40 text-green-400 border border-green-800/50',    dot: 'bg-green-400 animate-pulse', glow: 'border-green-800/40 hover:border-green-700/60' },
+  upcoming:  { label: 'Upcoming',  badge: 'bg-blue-900/40 text-blue-400 border border-blue-800/50',       dot: 'bg-blue-400',                glow: 'border-gray-800 hover:border-blue-800/50' },
+  completed: { label: 'Ended',     badge: 'bg-gray-800 text-gray-400 border border-gray-700',             dot: 'bg-gray-500',                glow: 'border-gray-800 hover:border-gray-700' },
+  cancelled: { label: 'Cancelled', badge: 'bg-red-900/40 text-red-400 border border-red-800/50',          dot: 'bg-red-400',                 glow: 'border-gray-800' },
+};
+
+function Countdown({ end }: { end: string }) {
+  const [parts, setParts] = useState({ h: 0, m: 0, s: 0, over: false });
   useEffect(() => {
     const tick = () => {
       const ms = new Date(end).getTime() - Date.now();
-      if (ms <= 0) { setLeft('Ended'); return; }
+      if (ms <= 0) { setParts({ h: 0, m: 0, s: 0, over: true }); return; }
       const h = Math.floor(ms / 3600000);
       const m = Math.floor((ms % 3600000) / 60000);
       const s = Math.floor((ms % 60000) / 1000);
-      setLeft(`${h}h ${m}m ${s}s`);
+      setParts({ h, m, s, over: false });
     };
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, [end]);
-  return <span className="text-amber-400 font-mono text-sm">{left}</span>;
+  if (parts.over) return <span className="text-gray-500 font-mono text-sm">Ended</span>;
+  return (
+    <div className="flex items-center gap-1">
+      {[
+        { val: parts.h, unit: 'h' },
+        { val: parts.m, unit: 'm' },
+        { val: parts.s, unit: 's' },
+      ].map(({ val, unit }) => (
+        <div key={unit} className="flex items-center">
+          <div className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 min-w-[32px] text-center">
+            <span className="text-white font-black text-sm font-mono">{String(val).padStart(2,'0')}</span>
+          </div>
+          <span className="text-gray-600 text-xs mx-0.5">{unit}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export default function ContestsPage() {
-  const router        = useRouter();
-  const { t }         = useI18n();
+  const router = useRouter();
   const [contests, setContests] = useState<any[]>([]);
   const [loading,  setLoading]  = useState(true);
   const [filter,   setFilter]   = useState('');
@@ -36,6 +57,7 @@ export default function ContestsPage() {
   useEffect(() => { if (!getToken()) router.push('/auth/login'); }, []);
 
   useEffect(() => {
+    setLoading(true);
     const q = filter ? `?status=${filter}` : '';
     api.get(`/contests${q}`)
       .then(r => setContests(r.data || []))
@@ -43,90 +65,172 @@ export default function ContestsPage() {
       .finally(() => setLoading(false));
   }, [filter]);
 
-  const STATUS_BADGE: Record<string, string> = {
-    upcoming: 'badge-blue', active: 'badge-green', completed: 'badge', cancelled: 'badge-red',
-  };
-
-  const filters: [string, string][] = [
-    ['', t('con_all')],
-    ['upcoming', t('con_upcoming')],
-    ['active', t('con_live')],
-    ['completed', t('con_ended')],
+  const FILTERS: { val: string; label: string; icon: any }[] = [
+    { val: '',          label: 'All',      icon: Trophy },
+    { val: 'active',   label: 'Live',     icon: Zap },
+    { val: 'upcoming', label: 'Upcoming', icon: Calendar },
+    { val: 'completed',label: 'Ended',    icon: CheckCircle },
   ];
+
+  const live      = contests.filter(c => c.status === 'active').length;
+  const upcoming  = contests.filter(c => c.status === 'upcoming').length;
+  const totalPool = contests.filter(c => c.status !== 'cancelled').reduce((s, c) => s + Number(c.prize_pool || 0), 0);
 
   return (
     <div className="min-h-screen bg-gray-950">
       <Navbar />
       <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-6">
+
+        {/* ── Header ── */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-white">{t('con_title')}</h1>
-            <p className="text-gray-500 text-sm mt-1">{t('con_subtitle')}</p>
+            <h1 className="text-2xl font-black text-white flex items-center gap-2">
+              <Trophy className="w-6 h-6 text-yellow-400" /> Contests
+            </h1>
+            <p className="text-gray-500 text-sm mt-1">Compete for real money prizes in timed tournaments</p>
           </div>
-          <div className="flex gap-2">
-            {filters.map(([v, l]) => (
-              <button key={v} onClick={() => setFilter(v)}
-                className={`btn btn-sm ${filter === v ? 'btn-primary' : 'btn-secondary'}`}>{l}</button>
-            ))}
+          <div className="flex items-center gap-4 text-sm">
+            {live > 0 && (
+              <span className="flex items-center gap-1.5 text-green-400 font-semibold animate-pulse">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-400" /> {live} Live
+              </span>
+            )}
+            {upcoming > 0 && <span className="text-blue-400">{upcoming} upcoming</span>}
+            {totalPool > 0 && <span className="text-yellow-400 font-bold">${totalPool.toLocaleString()} pool</span>}
           </div>
         </div>
 
+        {/* ── Filter tabs ── */}
+        <div className="flex items-center gap-2 bg-gray-900 border border-gray-800 rounded-xl p-1 w-fit">
+          {FILTERS.map(f => (
+            <button key={f.val} onClick={() => setFilter(f.val)}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold transition-all ${
+                filter === f.val
+                  ? 'bg-green-600 text-white shadow-lg shadow-green-900/30'
+                  : 'text-gray-400 hover:text-white hover:bg-gray-800'
+              }`}>
+              <f.icon className="w-3.5 h-3.5" />
+              {f.label}
+              {f.val === 'active' && live > 0 && (
+                <span className="bg-green-400 text-gray-900 text-xs font-black rounded-full w-4 h-4 flex items-center justify-center">
+                  {live}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* ── Content ── */}
         {loading ? (
           <div className="space-y-4">
-            {[1,2,3].map(i => <div key={i} className="card p-6 animate-pulse h-36" />)}
+            {[1,2,3].map(i => (
+              <div key={i} className="bg-gray-900 border border-gray-800 rounded-2xl p-6 animate-pulse">
+                <div className="flex justify-between mb-4">
+                  <div className="space-y-2">
+                    <div className="h-3 w-16 bg-gray-800 rounded-full" />
+                    <div className="h-5 w-64 bg-gray-800 rounded" />
+                  </div>
+                  <div className="h-8 w-24 bg-gray-800 rounded" />
+                </div>
+                <div className="grid grid-cols-4 gap-3">
+                  {[1,2,3,4].map(j => <div key={j} className="h-14 bg-gray-800 rounded-xl" />)}
+                </div>
+              </div>
+            ))}
           </div>
         ) : contests.length === 0 ? (
-          <div className="card p-16 text-center">
-            <Trophy className="w-10 h-10 mx-auto text-gray-700 mb-3" />
-            <p className="text-gray-500">{t('con_no_contests')}</p>
-            <p className="text-gray-600 text-sm mt-1">{t('con_check_back')}</p>
+          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-16 text-center">
+            <Trophy className="w-14 h-14 text-gray-700 mx-auto mb-4" />
+            <p className="text-gray-400 font-bold text-lg mb-1">No contests right now</p>
+            <p className="text-gray-600 text-sm">Check back soon — new contests are added regularly</p>
           </div>
         ) : (
           <div className="space-y-4">
-            {contests.map((c: any) => (
-              <Link key={c.id} href={`/contests/${c.id}`}
-                className="card p-6 block hover:border-green-800/50 transition-all group">
-                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <span className={`badge text-xs capitalize ${STATUS_BADGE[c.status] || 'badge'}`}>{c.status}</span>
-                      {c.is_rated && <span className="badge text-xs">{t('con_rated')}</span>}
+            {contests.map((c: any) => {
+              const cfg = STATUS_CONFIG[c.status] || STATUS_CONFIG.completed;
+              const isLive   = c.status === 'active';
+              const isUpcoming = c.status === 'upcoming';
+              const isFree   = Number(c.entry_fee) === 0;
+              return (
+                <Link key={c.id} href={`/contests/${c.id}`}
+                  className={`block bg-gray-900 border rounded-2xl overflow-hidden transition-all group hover:-translate-y-0.5 duration-200 ${cfg.glow}`}>
+
+                  {/* Live banner */}
+                  {isLive && (
+                    <div className="bg-green-900/30 border-b border-green-800/40 px-5 py-2 flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+                      <span className="text-xs text-green-400 font-bold uppercase tracking-wider">Contest is Live — Join Now</span>
                     </div>
-                    <h2 className="font-bold text-white text-lg group-hover:text-green-300 transition-colors">{c.title}</h2>
-                    {c.description && <p className="text-gray-500 text-sm mt-1 line-clamp-2">{c.description}</p>}
-                  </div>
+                  )}
 
-                  <div className="shrink-0 text-right">
-                    <p className="text-2xl font-black text-green-400">{Number(c.prize_pool || 0).toLocaleString()}</p>
-                    <p className="text-gray-500 text-xs">RWF {t('con_prize_pool')}</p>
-                  </div>
-                </div>
+                  <div className="p-6">
+                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2 mb-2">
+                          <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full border ${cfg.badge}`}>
+                            <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${cfg.dot}`} />
+                            {cfg.label}
+                          </span>
+                          {c.is_rated && (
+                            <span className="text-xs bg-purple-900/40 text-purple-400 border border-purple-800/40 rounded-full px-2 py-0.5 font-semibold flex items-center gap-1">
+                              <Star className="w-3 h-3" /> Rated
+                            </span>
+                          )}
+                          {isFree && (
+                            <span className="text-xs bg-green-900/30 text-green-400 border border-green-800/40 rounded-full px-2 py-0.5 font-semibold">Free Entry</span>
+                          )}
+                        </div>
+                        <h2 className="font-black text-white text-xl group-hover:text-green-300 transition-colors mb-1">{c.title}</h2>
+                        {c.description && (
+                          <p className="text-gray-500 text-sm line-clamp-1">{c.description}</p>
+                        )}
+                      </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
-                  <div className="bg-gray-800 rounded-xl px-3 py-2.5">
-                    <p className="text-xs text-gray-500 mb-0.5">{t('con_entry_fee')}</p>
-                    <p className="font-semibold text-white text-sm">
-                      {Number(c.entry_fee) === 0 ? t('con_free') : `${Number(c.entry_fee).toLocaleString()} RWF`}
-                    </p>
+                      <div className="text-right shrink-0">
+                        <p className="text-3xl font-black text-green-400">${Number(c.prize_pool || 0).toLocaleString()}</p>
+                        <p className="text-gray-500 text-xs mt-0.5">Prize Pool</p>
+                        {isLive && (
+                          <div className="mt-2 inline-flex items-center gap-1.5 bg-green-600 hover:bg-green-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors">
+                            Join Now <ArrowRight className="w-3 h-3" />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Stats grid */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5">
+                      <div className="bg-gray-800/60 border border-gray-700/50 rounded-xl px-3 py-2.5">
+                        <p className="text-xs text-gray-500 mb-1 flex items-center gap-1"><Lock className="w-3 h-3" /> Entry</p>
+                        <p className="font-black text-white text-sm">
+                          {isFree ? <span className="text-green-400">Free</span> : `$${Number(c.entry_fee).toLocaleString()}`}
+                        </p>
+                      </div>
+                      <div className="bg-gray-800/60 border border-gray-700/50 rounded-xl px-3 py-2.5">
+                        <p className="text-xs text-gray-500 mb-1 flex items-center gap-1"><Users className="w-3 h-3" /> Players</p>
+                        <p className="font-black text-white text-sm">
+                          {c.participant_count || 0}{c.max_participants ? <span className="text-gray-500 font-normal text-xs">/{c.max_participants}</span> : ''}
+                        </p>
+                      </div>
+                      <div className="bg-gray-800/60 border border-gray-700/50 rounded-xl px-3 py-2.5 col-span-2">
+                        <p className="text-xs text-gray-500 mb-1 flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          {isLive ? 'Time Remaining' : isUpcoming ? 'Starts In' : 'Ended'}
+                        </p>
+                        {isLive ? (
+                          <Countdown end={c.end_time} />
+                        ) : isUpcoming ? (
+                          <Countdown end={c.start_time} />
+                        ) : (
+                          <span className="text-sm text-gray-400">
+                            {new Date(c.end_time || c.start_time).toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' })}
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  <div className="bg-gray-800 rounded-xl px-3 py-2.5">
-                    <p className="text-xs text-gray-500 mb-0.5 flex items-center gap-1"><Users className="w-3 h-3" />{t('con_participants')}</p>
-                    <p className="font-semibold text-white text-sm">
-                      {c.participant_count || 0}{c.max_participants ? `/${c.max_participants}` : ''}
-                    </p>
-                  </div>
-                  <div className="bg-gray-800 rounded-xl px-3 py-2.5 col-span-2">
-                    <p className="text-xs text-gray-500 mb-0.5 flex items-center gap-1"><Clock className="w-3 h-3" />
-                      {c.status === 'active' ? t('con_ends_in') : c.status === 'upcoming' ? t('con_upcoming') : t('con_ended')}
-                    </p>
-                    {c.status === 'active'
-                      ? <CountDown end={c.end_time} />
-                      : <span className="text-sm text-gray-300">{new Date(c.start_time).toLocaleString()}</span>
-                    }
-                  </div>
-                </div>
-              </Link>
-            ))}
+                </Link>
+              );
+            })}
           </div>
         )}
       </main>

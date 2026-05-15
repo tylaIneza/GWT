@@ -1,608 +1,727 @@
 'use client';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import Navbar from '@/components/Navbar';
 import api from '@/lib/api';
 import { getToken } from '@/lib/auth';
-import { useI18n } from '@/lib/i18n-context';
 import {
-  Play, RotateCcw, Clock, CheckCircle, XCircle,
-  AlertTriangle, Coins, TrendingUp, TrendingDown,
-  ChevronLeft, ChevronRight, Trophy, Timer,
+  Clock, CheckCircle, Trophy, Timer, Shuffle, Sparkles,
+  Code2, Zap, Brain, ArrowRight, RotateCcw, Play,
+  ChevronLeft, ChevronRight, XCircle,
 } from 'lucide-react';
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
 
+/* ─── constants ─────────────────────────────────────────────────── */
+const AUTO_DELAY = 3; // idle seconds before auto-check
+
 const LANGUAGES = [
-  { id: 'javascript', label: 'JavaScript', monaco: 'javascript', available: true  },
-  { id: 'typescript', label: 'TypeScript', monaco: 'typescript', available: true  },
-  { id: 'python',     label: 'Python',     monaco: 'python',     available: true  },
-  { id: 'java',       label: 'Java',       monaco: 'java',       available: true  },
-  { id: 'cpp',        label: 'C++',        monaco: 'cpp',        available: true  },
-  { id: 'swift',      label: 'Swift',      monaco: 'swift',      available: true  },
-  { id: 'ruby',       label: 'Ruby',       monaco: 'ruby',       available: true  },
-  { id: 'go',         label: 'Go',         monaco: 'go',         available: false },
-  { id: 'rust',       label: 'Rust',       monaco: 'rust',       available: false },
-  { id: 'kotlin',     label: 'Kotlin',     monaco: 'kotlin',     available: false },
-  { id: 'csharp',     label: 'C#',         monaco: 'csharp',     available: false },
-  { id: 'php',        label: 'PHP',        monaco: 'php',        available: false },
+  { id: 'javascript', label: 'JavaScript', available: true  },
+  { id: 'typescript', label: 'TypeScript', available: true  },
+  { id: 'python',     label: 'Python',     available: true  },
+  { id: 'java',       label: 'Java',       available: true  },
+  { id: 'cpp',        label: 'C++',        available: true  },
+  { id: 'swift',      label: 'Swift',      available: true  },
+  { id: 'ruby',       label: 'Ruby',       available: true  },
+  { id: 'html',       label: 'HTML',       available: true  },
+  { id: 'go',         label: 'Go',         available: false },
+  { id: 'rust',       label: 'Rust',       available: false },
+  { id: 'kotlin',     label: 'Kotlin',     available: false },
+  { id: 'csharp',     label: 'C#',         available: false },
+  { id: 'php',        label: 'PHP',        available: false },
 ];
+
+/* ─── Per-language starter guide shown in the editor ────────────── */
+const GUIDES: Record<string, string> = {
+  javascript: `// HOW TO ANSWER
+// 1. Read the input from stdin (it comes in as lines of text)
+// 2. Process the input to solve the challenge
+// 3. Print your answer using console.log()
+//
+// Example — reading input and printing output:
+//
+//   const lines = require('fs').readFileSync('/dev/stdin','utf8').trim().split('\\n');
+//   console.log(lines[0]);  // print first line
+//
+// The system checks your answer automatically every few seconds.
+// START WRITING YOUR SOLUTION BELOW:
+`,
+  typescript: `// HOW TO ANSWER
+// 1. Read input from stdin as lines of text
+// 2. Solve the problem
+// 3. Print your answer with console.log()
+//
+// Example:
+//   import * as fs from 'fs';
+//   const lines = fs.readFileSync('/dev/stdin','utf8').trim().split('\\n');
+//   console.log(lines[0]);
+//
+// START WRITING YOUR SOLUTION BELOW:
+`,
+  python: `# HOW TO ANSWER
+# 1. Read the input using input() or sys.stdin
+# 2. Solve the problem
+# 3. Print your answer using print()
+#
+# Example:
+#   import sys
+#   lines = sys.stdin.read().strip().split('\\n')
+#   print(lines[0])
+#
+# START WRITING YOUR SOLUTION BELOW:
+`,
+  java: `// HOW TO ANSWER
+// 1. Read input using Scanner
+// 2. Solve the problem
+// 3. Print your answer with System.out.println()
+//
+// Example:
+//   Scanner sc = new Scanner(System.in);
+//   String line = sc.nextLine();
+//   System.out.println(line);
+//
+// Your class MUST be named Solution with a main method.
+// START WRITING YOUR SOLUTION BELOW:
+`,
+  cpp: `// HOW TO ANSWER
+// 1. Read input using cin or getline
+// 2. Solve the problem
+// 3. Print your answer with cout
+//
+// Example:
+//   string line;
+//   getline(cin, line);
+//   cout << line << endl;
+//
+// START WRITING YOUR SOLUTION BELOW:
+`,
+  ruby: `# HOW TO ANSWER
+# 1. Read input using $stdin or gets
+# 2. Solve the problem
+# 3. Print your answer using puts
+#
+# Example:
+#   lines = $stdin.read.strip.split("\\n")
+#   puts lines[0]
+#
+# START WRITING YOUR SOLUTION BELOW:
+`,
+  swift: `// HOW TO ANSWER
+// 1. Read input using readLine()
+// 2. Solve the problem
+// 3. Print your answer with print()
+//
+// Example:
+//   if let line = readLine() { print(line) }
+//
+// START WRITING YOUR SOLUTION BELOW:
+`,
+  go: `// HOW TO ANSWER
+// 1. Read input using bufio.Scanner or fmt.Scan
+// 2. Solve the problem
+// 3. Print your answer with fmt.Println()
+//
+// Example:
+//   scanner := bufio.NewScanner(os.Stdin)
+//   scanner.Scan()
+//   fmt.Println(scanner.Text())
+//
+// START WRITING YOUR SOLUTION BELOW:
+`,
+  rust: `// HOW TO ANSWER
+// 1. Read input from stdin
+// 2. Solve the problem
+// 3. Print your answer with println!()
+//
+// Example:
+//   let mut line = String::new();
+//   std::io::stdin().read_line(&mut line).unwrap();
+//   println!("{}", line.trim());
+//
+// START WRITING YOUR SOLUTION BELOW:
+`,
+  php: `<?php
+// HOW TO ANSWER
+// 1. Read input from stdin
+// 2. Solve the problem
+// 3. Print your answer with echo
+//
+// Example:
+//   $lines = explode("\\n", trim(file_get_contents("php://stdin")));
+//   echo $lines[0] . "\\n";
+//
+// START WRITING YOUR SOLUTION BELOW:
+`,
+  kotlin: `// HOW TO ANSWER
+// 1. Read input using readLine()
+// 2. Solve the problem
+// 3. Print your answer with println()
+//
+// Example:
+//   fun main() { println(readLine()!!) }
+//
+// START WRITING YOUR SOLUTION BELOW:
+`,
+  html: `<!-- HOW TO ANSWER
+  1. Write your logic inside a <script> tag
+  2. Read input: const lines = require('fs').readFileSync('/dev/stdin','utf8').trim().split('\\n')
+  3. Print your answer: console.log(yourAnswer)
+  The judge extracts your <script> content and runs it automatically.
+
+  Example:
+  <script>
+    const lines = require('fs').readFileSync('/dev/stdin','utf8').trim().split('\\n');
+    console.log(lines[0]);
+  </script>
+
+  START WRITING YOUR SOLUTION BELOW:
+-->
+`,
+};
 
 const TEMPLATES: Record<string, string> = {
   javascript: `const lines = require('fs').readFileSync('/dev/stdin','utf8').trim().split('\\n');
-// Parse input and write your solution
 function solve(lines) {
   // your logic here
   return lines[0];
 }
 console.log(solve(lines));`,
-
   typescript: `import * as fs from 'fs';
 const lines = fs.readFileSync('/dev/stdin','utf8').trim().split('\\n');
 function solve(lines: string[]): string {
-  // your logic here
   return lines[0];
 }
 console.log(solve(lines));`,
-
   python: `import sys
 lines = sys.stdin.read().strip().split('\\n')
 def solve(lines):
     # your logic here
     return lines[0]
 print(solve(lines))`,
-
   java: `import java.util.*;
 public class Solution {
     public static void main(String[] args) {
         Scanner sc = new Scanner(System.in);
-        // read input with sc.nextLine(), sc.nextInt(), etc.
         String line = sc.nextLine();
-        // your logic here
         System.out.println(line);
     }
 }`,
-
   cpp: `#include <bits/stdc++.h>
 using namespace std;
 int main() {
-    ios_base::sync_with_stdio(false);
-    cin.tie(NULL);
     string line;
     getline(cin, line);
-    // your logic here
     cout << line << endl;
-    return 0;
 }`,
-
   csharp: `using System;
-using System.IO;
 class Solution {
-    static void Main() {
-        string line = Console.ReadLine();
-        // your logic here
-        Console.WriteLine(line);
-    }
+    static void Main() { Console.WriteLine(Console.ReadLine()); }
 }`,
-
   php: `<?php
 $lines = explode("\\n", trim(file_get_contents("php://stdin")));
-// your logic here
 echo $lines[0] . "\\n";`,
-
   go: `package main
-import (
-    "bufio"
-    "fmt"
-    "os"
-)
+import ("bufio";"fmt";"os")
 func main() {
-    reader := bufio.NewReader(os.Stdin)
-    line, _ := reader.ReadString('\\n')
-    // your logic here
+    r := bufio.NewReader(os.Stdin)
+    line, _ := r.ReadString('\\n')
     fmt.Println(line)
 }`,
-
-  rust: `use std::io::{self, BufRead};
+  rust: `use std::io::{self,BufRead};
 fn main() {
-    let stdin = io::stdin();
-    let line = stdin.lock().lines().next().unwrap().unwrap();
-    // your logic here
-    println!("{}", line);
+    let l = io::stdin().lock().lines().next().unwrap().unwrap();
+    println!("{}", l);
 }`,
-
   swift: `import Foundation
-let lines = AnyIterator { readLine() }.prefix(1000).compactMap { $0 }
-// your logic here
-if let first = lines.first { print(first) }`,
-
-  kotlin: 'import java.util.Scanner\nfun main() {\n    val sc = Scanner(System.`in`)\n    val line = sc.nextLine()\n    // your logic here\n    println(line)\n}',
-
-  ruby: `lines = $stdin.read.strip.split("\\n")
-# your logic here
-puts lines[0]`,
-};
-
-const DIFF_BADGE: Record<string, string>      = { easy: 'badge-green', medium: 'badge-yellow', hard: 'badge-red' };
-const DIFF_MULTIPLIER: Record<string, number> = { easy: 2,             medium: 3,              hard: 5          };
-const DIFF_GLOW: Record<string, string> = {
-  easy:   'border-green-700/60',
-  medium: 'border-yellow-700/60',
-  hard:   'border-red-700/60',
-};
-const DIFF_ACCENT: Record<string, string> = {
-  easy:   'text-green-400',
-  medium: 'text-yellow-400',
-  hard:   'text-red-400',
-};
-const DIFF_BTN: Record<string, string> = {
-  easy:   'bg-green-700 hover:bg-green-600',
-  medium: 'bg-yellow-700 hover:bg-yellow-600',
-  hard:   'bg-red-700 hover:bg-red-600',
-};
-
-interface TypingStats {
-  keystrokes: number; paste_count: number;
-  time_to_first_char: number; total_time_ms: number; start_time: number | null;
+let lines = AnyIterator { readLine() }.prefix(1000).compactMap{$0}
+if let f = lines.first { print(f) }`,
+  kotlin: `fun main(){ println(readLine()!!) }`,
+  ruby:   `puts $stdin.read.strip.split("\\n")[0]`,
+  html: `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Solution</title>
+</head>
+<body>
+<script>
+const lines = require('fs').readFileSync('/dev/stdin','utf8').trim().split('\\n');
+function solve(lines) {
+  // your logic here
+  return lines[0];
 }
+console.log(solve(lines));
+</script>
+</body>
+</html>`,
+};
 
-function formatTime(s: number) {
-  const m = Math.floor(s / 60);
-  const sec = s % 60;
-  return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
-}
+const DB: Record<string, string> = {
+  easy:   'bg-green-900/40 text-green-400 border-green-800/50',
+  medium: 'bg-yellow-900/40 text-yellow-400 border-yellow-800/50',
+  hard:   'bg-red-900/40 text-red-400 border-red-800/50',
+};
+const DGLOW:   Record<string, string> = { easy:'border-green-700/60',  medium:'border-yellow-700/60',  hard:'border-red-700/60' };
+const DACC:    Record<string, string> = { easy:'text-green-400',       medium:'text-yellow-400',       hard:'text-red-400' };
+const DBTN:    Record<string, string> = { easy:'bg-green-700 hover:bg-green-600', medium:'bg-yellow-700 hover:bg-yellow-600', hard:'bg-red-700 hover:bg-red-600' };
+const DREWARD: Record<string, string> = { easy:'$5', medium:'$15', hard:'$40' };
 
+const fmt = (s: number) =>
+  `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
+
+/* ─── Spinner helper ─────────────────────────────────────────────── */
+const Spin = ({ cls = 'w-3.5 h-3.5' }: { cls?: string }) => (
+  <svg className={`${cls} animate-spin`} viewBox="0 0 24 24" fill="none">
+    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+  </svg>
+);
+
+/* ═══════════════════════════════════════════════════════════════════ */
 export default function ChallengePage() {
   const router  = useRouter();
   const { id }  = useParams<{ id: string }>();
-  const { t }   = useI18n();
 
+  /* UI state */
   const [challenge,     setChallenge]     = useState<any>(null);
   const [language,      setLanguage]      = useState('javascript');
-  const [code,          setCode]          = useState(TEMPLATES.javascript);
-  const [submitting,    setSubmitting]    = useState(false);
-  const [result,        setResult]        = useState<any>(null);
-  const [tab,           setTab]           = useState<'description' | 'submissions'>('description');
+  const [code,          setCode]          = useState(GUIDES.javascript);
+  const [tab,           setTab]           = useState<'description'|'submissions'>('description');
   const [subs,          setSubs]          = useState<any[]>([]);
-  const [alreadySolved, setAlreadySolved] = useState(false);
 
-  // Navigation
-  const [challengeList, setChallengeList] = useState<{ id: string; title: string; user_solved: number }[]>([]);
+  /* session / game state */
+  const [sessionReady,  setSessionReady]  = useState(false);
+  const [showModal,     setShowModal]     = useState(false);
+  const [startLoading,  setStartLoading]  = useState(false);
+  const [expiresAt,     setExpiresAt]     = useState<string|null>(null);
+  const [timeLeft,      setTimeLeft]      = useState<number|null>(null);
+  const [timedOut,      setTimedOut]      = useState(false);
+  const [solved,        setSolved]        = useState(false);
+  const [showWin,       setShowWin]       = useState(false);
+  const [challengeList, setChallengeList] = useState<any[]>([]);
 
-  // Bet modal state
-  const [showModal,  setShowModal]  = useState(false);
-  const [betReady,   setBetReady]   = useState(false);
-  const [betAmount,  setBetAmount]  = useState('');
-  const [activeBet,  setActiveBet]  = useState<any>(null);
-  const [betLoading, setBetLoading] = useState(false);
-  const [betError,   setBetError]   = useState('');
+  /* auto-check state */
+  const [checking,      setChecking]      = useState(false);
+  const [countdown,     setCountdown]     = useState<number|null>(null); // seconds remaining
+  const [hasEdited,     setHasEdited]     = useState(false);
+  const [checkCount,    setCheckCount]    = useState(0);
+  const [liveResult,    setLiveResult]    = useState<any>(null);
+  const [bestScore,     setBestScore]     = useState(0);
+  const [bestPassed,    setBestPassed]    = useState(0);
+  const [bestTotal,     setBestTotal]     = useState(0);
 
-  // Timer state
-  const [expiresAt, setExpiresAt] = useState<string | null>(null);
-  const [timeLeft,  setTimeLeft]  = useState<number | null>(null);
-  const [timedOut,  setTimedOut]  = useState(false);
-  const timedOutRef = useRef(false);
+  /* navigation */
+  const [shuffleLoading, setShuffleLoading] = useState(false);
+  const [aiLoading,      setAiLoading]      = useState(false);
 
-  const stats        = useRef<TypingStats>({ keystrokes: 0, paste_count: 0, time_to_first_char: 0, total_time_ms: 0, start_time: null });
-  const sessionStart = useRef(Date.now());
+  /* refs — always up-to-date, safe to read inside stale closures */
+  const codeRef        = useRef(code);
+  const langRef        = useRef(language);
+  const solvedRef      = useRef(false);
+  const timedOutRef    = useRef(false);
+  const sessionReadyRef= useRef(false);
+  const checkingRef    = useRef(false);
+  const fireAtRef      = useRef<number|null>(null);   // timestamp when next auto-check fires
+  const tickerRef      = useRef<NodeJS.Timeout|null>(null);
+  const keystrokesRef  = useRef(0);
+  const pasteRef       = useRef(0);
+  const sessionStart   = useRef(Date.now());
+  const lastCheckAt    = useRef<number>(0);           // tracks cooldown (30s between checks)
 
+  codeRef.current     = code;
+  langRef.current     = language;
+  solvedRef.current   = solved;
+  timedOutRef.current = timedOut;
+  sessionReadyRef.current = sessionReady;
+  checkingRef.current = checking;
+
+  /* ── auth guard ── */
   useEffect(() => { if (!getToken()) router.push('/auth/login'); }, []);
 
-  // ── Load challenge + bet + session + list ─────────────────────
+  /* ── load challenge ── */
   useEffect(() => {
     if (!id) return;
     Promise.all([
       api.get(`/challenges/${id}`),
-      api.get(`/bets/active?challenge_id=${id}`),
       api.get(`/challenges/${id}/session`).catch(() => ({ data: null })),
       api.get('/challenges?limit=100'),
-    ]).then(([challengeRes, betRes, sessionRes, listRes]) => {
-      const ch = challengeRes.data;
+    ]).then(([cRes, sRes, lRes]) => {
+      const ch = cRes.data;
       setChallenge(ch);
-      setChallengeList(listRes.data.challenges || []);
-
-      const solved = Number(ch.user_stats?.solved) === 1;
-      setAlreadySolved(solved);
-
-      if (solved) {
-        setBetReady(true);
+      setChallengeList(lRes.data.challenges || []);
+      const wasSolved = Number(ch.user_stats?.solved) === 1;
+      setSolved(wasSolved);
+      solvedRef.current = wasSolved;
+      if (wasSolved) {
+        setSessionReady(true); sessionReadyRef.current = true;
+        api.get(`/submissions?challenge_id=${ch.id}`).then(r => setSubs(r.data || []));
         return;
       }
-
-      // Restore existing active session
-      const session = sessionRes.data;
-      if (session && session.status === 'active') {
-        const expTime = new Date(session.expires_at);
-        if (expTime > new Date()) {
-          setExpiresAt(session.expires_at);
-          if (betRes.data) setActiveBet(betRes.data);
-          setBetReady(true);
-          return;
-        }
-        // Session expired while away
-        setTimedOut(true);
-        timedOutRef.current = true;
-        setBetReady(true);
+      const sess = sRes.data;
+      if (sess?.status === 'active') {
+        setExpiresAt(sess.expires_at);
+        setSessionReady(true);
+        sessionReadyRef.current = true;
         return;
-      }
-
-      if (betRes.data) {
-        setActiveBet(betRes.data);
       }
       setShowModal(true);
     }).catch(() => router.push('/challenges'));
   }, [id]);
 
-  // ── Countdown timer ───────────────────────────────────────────
+  /* ── session countdown ── */
   useEffect(() => {
     if (!expiresAt || timedOut) return;
     const tick = () => {
-      const remaining = Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000));
-      setTimeLeft(remaining);
-      if (remaining === 0 && !timedOutRef.current) {
+      const rem = Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000));
+      setTimeLeft(rem);
+      if (rem === 0 && !timedOutRef.current) {
         timedOutRef.current = true;
         setTimedOut(true);
+        stopTicker();
         api.post(`/challenges/${id}/forfeit`).catch(() => {});
       }
     };
     tick();
-    const iv = setInterval(tick, 1000);
+    const iv = setInterval(tick, 500);
     return () => clearInterval(iv);
   }, [expiresAt]);
 
+  /* ── single master ticker (runs every 500ms) ───────────────────
+     Reads fireAtRef to compute countdown. Fires runCheck when due.
+     No stale closures — uses only refs.                          */
   useEffect(() => {
-    const fp   = [navigator.userAgent, screen.width + 'x' + screen.height, Intl.DateTimeFormat().resolvedOptions().timeZone, navigator.language].join('|');
-    const hash = btoa(fp).slice(0, 32);
-    api.post('/anti-cheat/fingerprint', { fingerprint: hash }).catch(() => {});
+    const tick = () => {
+      if (!fireAtRef.current) return;
+      const rem = Math.ceil((fireAtRef.current - Date.now()) / 1000);
+      if (rem <= 0) {
+        fireAtRef.current = null;
+        setCountdown(null);
+        runCheck();           // all access through refs inside
+      } else {
+        setCountdown(rem);
+      }
+    };
+    tickerRef.current = setInterval(tick, 500);
+    return () => { if (tickerRef.current) clearInterval(tickerRef.current); };
+  }, []); // mounts once — reads refs, never goes stale
+
+  /* ── anti-cheat fingerprint ── */
+  useEffect(() => {
+    const fp = [navigator.userAgent, screen.width+'x'+screen.height,
+                Intl.DateTimeFormat().resolvedOptions().timeZone].join('|');
+    api.post('/anti-cheat/fingerprint', { fingerprint: btoa(fp).slice(0,32) }).catch(() => {});
   }, []);
 
-  // ── Navigation helpers ────────────────────────────────────────
-  const currentIndex  = challengeList.findIndex(c => c.id === id);
-  const prevChallenge = currentIndex > 0 ? challengeList[currentIndex - 1] : null;
-  const nextChallenge = currentIndex >= 0 && currentIndex < challengeList.length - 1 ? challengeList[currentIndex + 1] : null;
-  const nextUnsolved  = challengeList.find(c => c.id !== id && Number(c.user_solved) !== 1) || nextChallenge;
+  /* ── helpers ── */
+  const stopTicker = () => { fireAtRef.current = null; setCountdown(null); };
 
-  const onLanguageChange = (lang: string) => {
-    setLanguage(lang);
-    setCode(TEMPLATES[lang] || '');
-    stats.current = { keystrokes: 0, paste_count: 0, time_to_first_char: 0, total_time_ms: 0, start_time: null };
+  const COOLDOWN_MS = 3_000; // match backend submission_cooldown_seconds
+
+  const armAutoCheck = () => {
+    if (solvedRef.current || timedOutRef.current || !sessionReadyRef.current) return;
+    // Don't schedule a check that would fire before the cooldown expires
+    const cooldownEnds = lastCheckAt.current + COOLDOWN_MS;
+    const fireAt = Math.max(Date.now() + AUTO_DELAY * 1000, cooldownEnds + 500);
+    fireAtRef.current = fireAt;
+    const secsUntil = Math.ceil((fireAt - Date.now()) / 1000);
+    setCountdown(secsUntil);
   };
 
-  const handleEditorChange = useCallback((value: string | undefined) => {
-    if (!value) return;
-    setCode(value);
-    if (!stats.current.start_time) {
-      stats.current.start_time         = Date.now();
-      stats.current.time_to_first_char = Date.now() - sessionStart.current;
+  const runCheck = async () => {
+    if (checkingRef.current || solvedRef.current || timedOutRef.current) return;
+    if (!codeRef.current.trim()) return; // don't check empty code
+    checkingRef.current = true;
+    lastCheckAt.current = Date.now();
+    setChecking(true);
+    setCheckCount(n => n + 1);
+    try {
+      const res = await api.post('/submissions', {
+        challenge_id: id,
+        language:     langRef.current,
+        code:         codeRef.current,
+        typing_stats: {
+          keystrokes:         keystrokesRef.current,
+          paste_count:        pasteRef.current,
+          time_to_first_char: 0,
+          total_time_ms:      Date.now() - sessionStart.current,
+        },
+      });
+      const d = res.data;
+      setLiveResult(d);
+      if ((d.score || 0) > bestScore) {
+        setBestScore(d.score || 0);
+        setBestPassed(d.passed || 0);
+        setBestTotal(d.total  || 0);
+      }
+      if (d.status === 'accepted') {
+        solvedRef.current = true;
+        setSolved(true);
+        setShowWin(true);
+        stopTicker();
+        setChallengeList(prev => prev.map(c => c.id === id ? { ...c, user_solved: 1 } : c));
+        api.get(`/submissions?challenge_id=${id}`).then(r => setSubs(r.data || []));
+      }
+    } catch (e: any) {
+      const msg = e.response?.data?.message || '';
+      if (msg === 'already_solved') { solvedRef.current = true; setSolved(true); setShowWin(true); stopTicker(); }
+      if (msg === 'time_limit_exceeded') { timedOutRef.current = true; setTimedOut(true); stopTicker(); }
+    } finally {
+      checkingRef.current = false;
+      setChecking(false);
     }
-    stats.current.keystrokes++;
-  }, []);
+  };
+
+  /* ── editor handlers ── */
+  const onLangChange = (lang: string) => {
+    setLanguage(lang);
+    langRef.current = lang;
+    const guide = GUIDES[lang] || '';
+    setCode(guide);
+    codeRef.current = guide;
+    keystrokesRef.current = 0;
+    setHasEdited(false);
+    setLiveResult(null);
+    stopTicker();
+  };
+
+  const onCodeChange = (value: string | undefined) => {
+    if (value === undefined) return;
+    if (!sessionReadyRef.current || solvedRef.current || timedOutRef.current) return;
+    codeRef.current = value;
+    setCode(value);
+    keystrokesRef.current++;
+    const isGuide = value.trim() === (GUIDES[langRef.current] || '').trim();
+    if (value.trim() && !isGuide) {
+      setHasEdited(true);
+      armAutoCheck();
+    }
+  };
 
   const onEditorMount = (editor: any) => {
-    editor.onDidPaste(() => { stats.current.paste_count++; });
-    editor.onKeyDown(() => {
-      if (!stats.current.start_time) {
-        stats.current.start_time         = Date.now();
-        stats.current.time_to_first_char = Date.now() - sessionStart.current;
-      }
-      stats.current.keystrokes++;
-    });
+    editor.onDidPaste(() => { pasteRef.current++; });
   };
 
-  // ── Start session (called after bet decision) ─────────────────
-  const startSession = async () => {
+  const startChallenge = async () => {
+    setStartLoading(true);
     try {
       const res = await api.post(`/challenges/${id}/start`);
       setExpiresAt(res.data.expires_at);
-    } catch {}
-  };
-
-  // ── Bet modal actions ─────────────────────────────────────────
-  const confirmBet = async () => {
-    const amount = Number(betAmount);
-    if (!amount || amount < 100) { setBetError('Minimum bet is 100 RWF'); return; }
-    setBetLoading(true); setBetError('');
-    try {
-      const res = await api.post('/bets', { challenge_id: id, amount });
-      setActiveBet(res.data);
+      setSessionReady(true);
+      sessionReadyRef.current = true;
       setShowModal(false);
-      setBetReady(true);
-      await startSession();
-    } catch (e: any) {
-      setBetError(e.response?.data?.message || 'Failed to place bet');
-    } finally { setBetLoading(false); }
+    } finally { setStartLoading(false); }
   };
 
-  const skipBet = async () => {
-    setShowModal(false);
-    setBetReady(true);
-    await startSession();
-  };
-
-  // ── Submit ────────────────────────────────────────────────────
-  const submit = async () => {
-    if (!challenge || submitting || alreadySolved || timedOut) return;
-    setSubmitting(true); setResult(null);
-    stats.current.total_time_ms = Date.now() - sessionStart.current;
+  const handleShuffle = async () => {
+    setShuffleLoading(true);
     try {
-      const res = await api.post('/submissions', {
-        challenge_id: challenge.id, language, code,
-        typing_stats: {
-          keystrokes:         stats.current.keystrokes,
-          paste_count:        stats.current.paste_count,
-          time_to_first_char: stats.current.time_to_first_char,
-          total_time_ms:      stats.current.total_time_ms,
-        },
-      });
-      setResult(res.data);
-      if (res.data.bet?.resolved) setActiveBet(null);
-      if (res.data.status === 'accepted') {
-        setAlreadySolved(true);
-        setChallengeList(prev => prev.map(c => c.id === id ? { ...c, user_solved: 1 } : c));
-      }
-      api.get(`/submissions?challenge_id=${challenge.id}`).then(r => setSubs(r.data || []));
-    } catch (e: any) {
-      const msg = e.response?.data?.message || 'Submission failed';
-      if (msg === 'already_solved') {
-        setAlreadySolved(true);
-        setResult({ error: 'You have already solved this challenge.' });
-      } else if (msg === 'time_limit_exceeded') {
-        setTimedOut(true);
-        timedOutRef.current = true;
-        setResult({ error: 'Time limit exceeded — your bet was forfeited.' });
-      } else {
-        setResult({ error: msg });
-      }
-    } finally { setSubmitting(false); }
+      const res = await api.get('/challenges/random');
+      if (res.data.id && res.data.id !== id) router.push(`/challenges/${res.data.id}`);
+    } catch {} finally { setShuffleLoading(false); }
   };
 
-  const loadSubmissions = () => {
-    if (!challenge) return;
-    api.get(`/submissions?challenge_id=${challenge.id}`).then(r => setSubs(r.data || []));
+  const handleAiGenerate = async () => {
+    setAiLoading(true);
+    try {
+      const res = await api.post('/challenges/ai-generate', { difficulty: challenge?.difficulty || 'medium' });
+      if (res.data.id) router.push(`/challenges/${res.data.id}`);
+    } catch {} finally { setAiLoading(false); }
   };
 
-  // ── Loading skeleton ──────────────────────────────────────────
-  if (!challenge) {
-    return (
-      <div className="min-h-screen bg-gray-950">
-        <Navbar />
-        <div className="flex items-center justify-center h-64 text-gray-500 animate-pulse">Loading challenge...</div>
+  /* ── derived ── */
+  const currentIndex  = challengeList.findIndex(c => c.id === id);
+  const prevChallenge = currentIndex > 0 ? challengeList[currentIndex - 1] : null;
+  const nextChallenge = currentIndex < challengeList.length - 1 ? challengeList[currentIndex + 1] : null;
+  const nextUnsolved  = challengeList.find(c => c.id !== id && Number(c.user_solved) !== 1) || nextChallenge;
+
+  const score  = liveResult?.score  ?? bestScore;
+  const passed = liveResult?.passed ?? bestPassed;
+  const total  = liveResult?.total  ?? bestTotal ?? challenge?.test_cases?.length ?? 0;
+
+  if (!challenge) return (
+    <div className="min-h-screen bg-gray-950">
+      <Navbar />
+      <div className="flex items-center justify-center h-64">
+        <div className="flex items-center gap-3 text-gray-500">
+          <Spin cls="w-5 h-5 text-green-400" /> Loading challenge…
+        </div>
       </div>
-    );
-  }
+    </div>
+  );
 
-  const multiplier   = DIFF_MULTIPLIER[challenge.difficulty] || 2;
-  const betAmountNum = Number(betAmount) || 0;
-  const potentialWin = betAmountNum * multiplier;
-  const diff         = challenge.difficulty as string;
+  const diff       = challenge.difficulty as string;
+  const timerColor = timeLeft === null ? 'text-gray-400' :
+    timeLeft > 240 ? 'text-green-400' : timeLeft > 90 ? 'text-yellow-400' : 'text-red-400';
+  const timerBg    = timeLeft === null ? 'bg-gray-900 border-gray-700' :
+    timeLeft > 240 ? 'bg-green-900/20 border-green-800/40' :
+    timeLeft > 90  ? 'bg-yellow-900/20 border-yellow-800/40' :
+                     'bg-red-900/20 border-red-800/40';
+  const timerPulse = (timeLeft !== null && timeLeft <= 30) ? 'animate-pulse' : '';
 
-  // Timer display
-  const timerColor = timeLeft === null ? '' :
-    timeLeft > 180 ? 'text-green-400' :
-    timeLeft > 60  ? 'text-yellow-400' :
-                     'text-red-400';
-  const timerPulse = (timeLeft !== null && timeLeft <= 10 && !timedOut) ? 'animate-pulse' : '';
+  /* ── score ring colours ── */
+  const ringColor = score === 100 ? '#22c55e' : score >= 50 ? '#eab308' : score > 0 ? '#f97316' : '#374151';
+  const scoreTextColor = score === 100 ? 'text-green-400' : score >= 50 ? 'text-yellow-400' : score > 0 ? 'text-orange-400' : 'text-gray-600';
 
+  /* circumference for r=18: 2π*18 ≈ 113.1 */
+  const CIRC = 2 * Math.PI * 18;
+
+  /* ═══════════════════════════════════════════════════════════════ */
   return (
     <div className="min-h-screen bg-gray-950 flex flex-col">
       <Navbar />
 
-      {/* ── BET CONFIRMATION MODAL ───────────────────────────── */}
-      {showModal && !alreadySolved && (
+      {/* ── START MODAL ───────────────────────────────────────── */}
+      {showModal && !solved && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className={`w-full max-w-md bg-gray-900 border-2 rounded-2xl shadow-2xl ${DIFF_GLOW[diff] || 'border-gray-700'} overflow-hidden`}>
-
+          <div className={`w-full max-w-md bg-gray-900 border-2 rounded-2xl shadow-2xl overflow-hidden ${DGLOW[diff]||'border-gray-700'}`}>
+            <div className={`h-1 w-full ${diff==='easy'?'bg-green-500':diff==='medium'?'bg-yellow-500':'bg-red-500'}`} />
             <div className="px-6 pt-6 pb-4 border-b border-gray-800">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <span className={`badge text-xs capitalize ${DIFF_BADGE[diff] || 'badge'} mb-2`}>{diff} · {multiplier}× payout</span>
-                  <h2 className="text-xl font-black text-white leading-tight">{challenge.title}</h2>
-                  <div className="flex items-center gap-1.5 mt-2 text-gray-400 text-xs">
-                    <Timer className="w-3.5 h-3.5 text-orange-400" />
-                    <span>You'll have <strong className="text-orange-300">3 minutes</strong> to solve after starting</span>
-                  </div>
-                </div>
-                <Coins className={`w-7 h-7 shrink-0 mt-1 ${DIFF_ACCENT[diff]}`} />
-              </div>
-            </div>
-
-            <div className="px-6 py-5 space-y-5">
-              <p className="text-gray-400 text-sm">
-                Place a bet before you start. If you solve it within 3 minutes you earn{' '}
-                <span className={`font-bold ${DIFF_ACCENT[diff]}`}>{multiplier}× your bet</span>.
-                If you fail or run out of time, the bet goes to the platform.
+              <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full border capitalize inline-block mb-3 ${DB[diff]}`}>{diff}</span>
+              <h2 className="text-xl font-black text-white mb-2">{challenge.title}</h2>
+              <p className="text-xs text-gray-400 flex items-center gap-1.5">
+                <Timer className="w-3.5 h-3.5 text-orange-400" />
+                5 minutes · system auto-checks as you type
               </p>
-
-              <div className="space-y-3">
-                <label className="label">Bet Amount (RWF)</label>
-                <input
-                  type="number" min="100" placeholder="Enter amount, e.g. 500"
-                  value={betAmount} onChange={e => { setBetAmount(e.target.value); setBetError(''); }}
-                  className="input text-lg font-bold" autoFocus
-                />
-                <div className="flex gap-2">
-                  {[500, 1000, 2000, 5000].map(v => (
-                    <button key={v} onClick={() => setBetAmount(String(v))}
-                      className="flex-1 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-semibold transition-colors">
-                      {v.toLocaleString()}
-                    </button>
-                  ))}
+            </div>
+            <div className="px-6 py-5 space-y-4">
+              <div className="grid grid-cols-3 gap-3 text-center">
+                <div className="bg-gray-800/60 rounded-xl p-3">
+                  <p className="text-gray-500 text-xs mb-1">Reward</p>
+                  <p className={`font-black text-xl ${DACC[diff]}`}>{DREWARD[diff]}</p>
                 </div>
-
-                {betAmountNum >= 100 && (
-                  <div className="flex items-center justify-between bg-gray-800/60 rounded-xl px-4 py-3">
-                    <div>
-                      <p className="text-xs text-gray-500">Your bet</p>
-                      <p className="font-bold text-white">{betAmountNum.toLocaleString()} RWF</p>
-                    </div>
-                    <div className="text-center text-gray-600 text-xl">×{multiplier}</div>
-                    <div className="text-right">
-                      <p className="text-xs text-gray-500">If you win</p>
-                      <p className={`text-2xl font-black ${DIFF_ACCENT[diff]}`}>{potentialWin.toLocaleString()} RWF</p>
-                    </div>
-                  </div>
-                )}
-
-                {betError && <p className="text-red-400 text-xs">{betError}</p>}
+                <div className="bg-gray-800/60 rounded-xl p-3">
+                  <p className="text-gray-500 text-xs mb-1">Timer</p>
+                  <p className="font-black text-xl text-orange-400">5:00</p>
+                </div>
+                <div className="bg-gray-800/60 rounded-xl p-3">
+                  <p className="text-gray-500 text-xs mb-1">Auto-check</p>
+                  <p className="font-black text-xl text-cyan-400">{AUTO_DELAY}s</p>
+                </div>
               </div>
-
-              <div className="flex gap-3 pt-1">
-                <button onClick={skipBet}
-                  className="flex-1 py-3 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 font-semibold text-sm transition-colors">
-                  {t('chd_free')}
-                </button>
-                <button
-                  onClick={confirmBet}
-                  disabled={betLoading || !betAmount || betAmountNum < 100}
-                  className={`flex-1 py-3 rounded-xl text-white font-bold text-sm transition-colors disabled:opacity-40 ${DIFF_BTN[diff] || 'bg-green-700 hover:bg-green-600'}`}>
-                  {betLoading ? 'Placing...' : `Bet ${betAmountNum >= 100 ? betAmountNum.toLocaleString() + ' RWF' : '...'}`}
-                </button>
-              </div>
-              <p className="text-center text-xs text-gray-600">Timer starts immediately after you click Start or Bet</p>
+              <p className="text-gray-400 text-sm leading-relaxed">
+                Start coding — the system checks your solution automatically every {AUTO_DELAY} seconds of idle time. Your score updates live.
+              </p>
+              <button onClick={startChallenge} disabled={startLoading}
+                className={`w-full py-3.5 rounded-xl text-white font-black text-sm flex items-center justify-center gap-2 disabled:opacity-40 ${DBTN[diff]}`}>
+                {startLoading ? <><Spin /> Starting…</> : <><Play className="w-4 h-4" /> Start Challenge (5:00)</>}
+              </button>
+              <button onClick={() => router.push('/challenges')} className="w-full text-center text-xs text-gray-500 hover:text-gray-300 transition-colors">
+                ← Back to challenges
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ── MAIN CHALLENGE LAYOUT ────────────────────────────── */}
+      {/* ── MAIN LAYOUT ────────────────────────────────────────── */}
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden" style={{ height: 'calc(100vh - 57px)' }}>
 
-        {/* LEFT: Description */}
-        <div className="w-full lg:w-2/5 border-r border-gray-800 flex flex-col overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-800 shrink-0">
+        {/* ── LEFT: Challenge question ─────────────────────────── */}
+        <div className="w-full lg:w-[40%] border-r border-gray-800 flex flex-col overflow-hidden">
 
-            {alreadySolved && (
-              <div className="flex items-center gap-2 bg-green-900/30 border border-green-700/50 rounded-xl px-4 py-2.5 mb-3">
-                <Trophy className="w-4 h-4 text-green-400 shrink-0" />
-                <span className="text-sm font-semibold text-green-300">{t('chd_solved_badge')}</span>
-              </div>
-            )}
-
-            <div className="flex items-start gap-3">
-              <div>
-                <h1 className="font-bold text-white text-lg leading-tight">{challenge.title}</h1>
-                <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                  <span className={`badge text-xs capitalize ${DIFF_BADGE[diff] || 'badge'}`}>{diff}</span>
-                  {challenge.category && <span className="badge text-xs">{challenge.category}</span>}
-                  <span className="text-xs text-gray-600"><Clock className="w-3 h-3 inline mr-0.5" />{challenge.time_limit_ms / 1000}s exec</span>
-                  {!alreadySolved && <span className={`text-xs font-bold ${DIFF_ACCENT[diff]}`}>{multiplier}× payout</span>}
-                </div>
-              </div>
+          {/* Header */}
+          <div className="px-6 pt-5 pb-4 border-b border-gray-800 shrink-0">
+            <div className="flex items-center gap-2 flex-wrap mb-3">
+              <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full border capitalize ${DB[diff]}`}>{diff}</span>
+              {challenge.category && (
+                <span className="text-xs bg-gray-800 text-gray-400 border border-gray-700 px-2.5 py-0.5 rounded-full">{challenge.category}</span>
+              )}
+              {solved
+                ? <span className="flex items-center gap-1 text-xs font-bold text-green-400"><CheckCircle className="w-3.5 h-3.5" /> Solved</span>
+                : <span className={`text-xs font-black ${DACC[diff]}`}>{DREWARD[diff]}</span>
+              }
             </div>
-
-            <div className="flex gap-0 mt-4 border-b border-gray-800 -mx-5 px-5">
-              {(['description', 'submissions'] as const).map(tabKey => (
-                <button key={tabKey} onClick={() => { setTab(tabKey); if (tabKey === 'submissions') loadSubmissions(); }}
-                  className={`pb-2 mr-5 text-sm font-medium border-b-2 transition-colors capitalize ${tab === tabKey ? 'border-green-500 text-green-400' : 'border-transparent text-gray-500 hover:text-gray-300'}`}>
-                  {tabKey === 'description' ? t('chd_description') : t('chd_submissions')}
-                </button>
-              ))}
-            </div>
+            <h1 className="text-xl font-black text-white leading-snug">{challenge.title}</h1>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-5 space-y-5">
-            {tab === 'description' && (
-              <>
-                {activeBet && !alreadySolved && (
-                  <div className={`rounded-xl border px-4 py-3 flex items-center justify-between ${
-                    diff === 'easy'   ? 'border-green-700/50  bg-green-900/20'  :
-                    diff === 'medium' ? 'border-yellow-700/50 bg-yellow-900/20' :
-                                        'border-red-700/50    bg-red-900/20'
-                  }`}>
-                    <div className="flex items-center gap-2">
-                      <Coins className={`w-4 h-4 ${DIFF_ACCENT[diff]}`} />
-                      <span className="text-sm font-semibold text-white">Bet active</span>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-xs text-gray-500">Staked → If win</p>
-                      <p className={`font-black text-sm ${DIFF_ACCENT[diff]}`}>
-                        {Number(activeBet.amount).toLocaleString()} → {Number(activeBet.potential_payout).toLocaleString()} RWF
-                      </p>
-                    </div>
-                  </div>
-                )}
+          {/* Scrollable body */}
+          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
 
-                <div className="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap">{challenge.description}</div>
+            {/* The question — plain and readable */}
+            <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
+              <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Your Task</p>
+              <p className="text-gray-200 text-sm leading-relaxed">
+                {challenge.description?.split('\n')[0]}
+              </p>
+            </div>
 
-                {challenge.test_cases?.length > 0 && (
-                  <div>
-                    <h3 className="text-sm font-semibold text-white mb-3">Examples</h3>
-                    <div className="space-y-3">
-                      {challenge.test_cases.map((tc: any, i: number) => (
-                        <div key={tc.id} className="bg-gray-800 rounded-xl p-4 text-sm space-y-2">
-                          <p className="text-gray-400 text-xs font-semibold uppercase">Example {i + 1}</p>
-                          <div>
-                            <p className="text-gray-500 text-xs mb-1">Input:</p>
-                            <pre className="text-green-300 font-mono text-xs bg-gray-900 p-2 rounded-lg overflow-x-auto">{tc.input}</pre>
-                          </div>
-                          <div>
-                            <p className="text-gray-500 text-xs mb-1">Expected:</p>
-                            <pre className="text-yellow-300 font-mono text-xs bg-gray-900 p-2 rounded-lg overflow-x-auto">{tc.expected_output}</pre>
-                          </div>
-                          {tc.explanation && <p className="text-gray-500 text-xs italic">{tc.explanation}</p>}
+            {/* Examples — only if they exist */}
+            {challenge.test_cases?.length > 0 && (
+              <div>
+                <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Examples</p>
+                <div className="space-y-3">
+                  {challenge.test_cases.slice(0, 2).map((tc: any, i: number) => (
+                    <div key={tc.id} className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-3">
+                      <p className="text-xs font-semibold text-gray-500">Example {i + 1}</p>
+                      <div className="flex gap-3">
+                        <div className="flex-1">
+                          <p className="text-xs text-gray-600 mb-1">Input</p>
+                          <pre className="text-green-300 font-mono text-sm bg-gray-950 px-3 py-2 rounded-lg border border-gray-800">{tc.input}</pre>
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div className="text-xs text-gray-600 bg-gray-800/50 rounded-xl p-3 space-y-1">
-                  <p>⚡ Execution limit: {challenge.time_limit_ms / 1000}s</p>
-                  <p>💾 Memory: {challenge.memory_limit_mb}MB</p>
-                  <p>📤 Max attempts: {challenge.max_submissions}/hour</p>
-                </div>
-              </>
-            )}
-
-            {tab === 'submissions' && (
-              <div className="space-y-2">
-                {subs.length === 0
-                  ? <p className="text-gray-500 text-sm text-center py-8">{t('chd_no_subs')}</p>
-                  : subs.map((s: any) => (
-                    <div key={s.id} className="bg-gray-800 rounded-xl px-4 py-3 flex items-center justify-between">
-                      <div>
-                        <span className={`badge text-xs ${s.status === 'accepted' ? 'badge-green' : s.status === 'wrong_answer' ? 'badge-red' : 'badge-yellow'}`}>
-                          {s.status.replace(/_/g, ' ')}
-                        </span>
-                        <p className="text-xs text-gray-500 mt-1 capitalize">{s.language} · {new Date(s.submitted_at).toLocaleString()}</p>
+                        <div className="flex items-center text-gray-600 pt-5">→</div>
+                        <div className="flex-1">
+                          <p className="text-xs text-gray-600 mb-1">Output</p>
+                          <pre className="text-yellow-300 font-mono text-sm bg-gray-950 px-3 py-2 rounded-lg border border-gray-800">{tc.expected_output}</pre>
+                        </div>
                       </div>
-                      <span className={`font-bold text-sm ${s.score === 100 ? 'text-green-400' : 'text-gray-400'}`}>{s.score}%</span>
+                      {tc.explanation && (
+                        <p className="text-xs text-gray-500 italic">{tc.explanation}</p>
+                      )}
                     </div>
                   ))}
+                </div>
               </div>
             )}
+
+            {/* Past attempts */}
+            {subs.length > 0 && (
+              <div>
+                <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Your Attempts</p>
+                <div className="space-y-2">
+                  {subs.slice(0, 5).map((s: any) => (
+                    <div key={s.id} className={`rounded-xl px-4 py-2.5 flex items-center justify-between border ${s.status==='accepted'?'bg-green-900/20 border-green-800/40':'bg-gray-800/50 border-gray-700/50'}`}>
+                      <span className={`text-xs font-bold capitalize ${s.status==='accepted'?'text-green-400':s.status==='wrong_answer'?'text-red-400':'text-yellow-400'}`}>
+                        {s.status==='accepted'?'✓ ':'✗ '}{s.status.replace(/_/g,' ')}
+                      </span>
+                      <span className={`font-black text-sm ${s.score===100?'text-green-400':'text-gray-400'}`}>{s.score}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
           </div>
         </div>
 
-        {/* RIGHT: Editor + Results */}
+        {/* ── RIGHT: Score panel + Toolbar + Editor ────────────── */}
         <div className="flex-1 flex flex-col overflow-hidden relative">
 
-          {/* Lock overlay */}
-          {!betReady && (
+          {/* start lock */}
+          {!sessionReady && (
             <div className="absolute inset-0 z-10 bg-gray-950/80 backdrop-blur-sm flex items-center justify-center">
-              <p className="text-gray-500 text-sm animate-pulse">Confirm your bet to start the timer…</p>
+              <p className="text-gray-500 text-sm animate-pulse">Starting session…</p>
             </div>
           )}
 
-          {/* TIME'S UP overlay */}
-          {timedOut && (
+          {/* TIME'S UP */}
+          {timedOut && !showWin && (
             <div className="absolute inset-0 z-20 bg-gray-950/95 backdrop-blur-md flex items-center justify-center">
-              <div className="text-center space-y-4 px-8">
-                <div className="text-6xl mb-2">⏰</div>
-                <h2 className="text-4xl font-black text-red-400">Time's Up!</h2>
-                <p className="text-gray-400 text-sm">
-                  {activeBet ? 'Your bet has been forfeited to the platform.' : 'The 3-minute window has ended.'}
+              <div className="text-center px-8 max-w-sm">
+                <div className="w-20 h-20 rounded-full bg-red-900/30 border-2 border-red-700/40 flex items-center justify-center mx-auto mb-5">
+                  <Timer className="w-10 h-10 text-red-400" />
+                </div>
+                <h2 className="text-3xl font-black text-red-400 mb-2">Time's Up!</h2>
+                <p className="text-gray-400 text-sm mb-1">
+                  Final score: <span className={`font-black ${bestScore===100?'text-green-400':'text-yellow-400'}`}>{bestScore}%</span>
+                  {bestTotal > 0 && <> ({bestPassed}/{bestTotal} tests)</>}
                 </p>
-                <div className="flex gap-3 justify-center mt-6">
-                  <button onClick={() => router.push('/challenges')}
-                    className="px-5 py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-200 font-semibold text-sm transition-colors">
-                    Back to List
-                  </button>
+                <p className="text-gray-600 text-sm mb-6">The 5-minute window has ended.</p>
+                <div className="flex gap-3 justify-center">
+                  <button onClick={() => router.push('/challenges')} className="px-5 py-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-200 font-semibold text-sm">Back</button>
                   {nextUnsolved && (
-                    <button onClick={() => router.push(`/challenges/${nextUnsolved.id}`)}
-                      className="px-5 py-2.5 rounded-xl bg-green-700 hover:bg-green-600 text-white font-bold text-sm transition-colors">
-                      Try Next Challenge
+                    <button onClick={() => router.push(`/challenges/${nextUnsolved.id}`)} className="px-5 py-2.5 rounded-xl bg-green-700 hover:bg-green-600 text-white font-bold text-sm flex items-center gap-1.5">
+                      Next <ArrowRight className="w-3.5 h-3.5" />
                     </button>
                   )}
                 </div>
@@ -610,176 +729,220 @@ export default function ChallengePage() {
             </div>
           )}
 
-          {/* Toolbar */}
-          <div className="px-4 py-2.5 border-b border-gray-800 flex items-center justify-between shrink-0">
-            <div className="flex items-center gap-2">
-              {/* Prev/Next navigation */}
-              <button onClick={() => prevChallenge && router.push(`/challenges/${prevChallenge.id}`)}
-                disabled={!prevChallenge} title={prevChallenge?.title}
-                className="btn-ghost btn-sm disabled:opacity-30 px-2">
+          {/* WIN overlay */}
+          {showWin && liveResult && (
+            <div className="absolute inset-0 z-30 flex items-center justify-center bg-gray-950/90 backdrop-blur-sm">
+              <div className="w-full max-w-md mx-4 bg-gray-900 border-2 border-green-600/60 rounded-2xl overflow-hidden shadow-2xl">
+                <div className="h-1.5 bg-gradient-to-r from-green-500 to-emerald-400" />
+                <div className="p-6 text-center">
+                  <div className="w-20 h-20 rounded-full bg-green-900/40 border-2 border-green-500/40 flex items-center justify-center mx-auto mb-4">
+                    <Trophy className="w-10 h-10 text-yellow-400" />
+                  </div>
+                  <h2 className="text-2xl font-black text-green-400 mb-1">🎉 Accepted!</h2>
+                  <p className="text-gray-400 text-sm mb-4">
+                    {liveResult.passed}/{liveResult.total} tests · {liveResult.score}%
+                    {liveResult.time_ms ? ` · ${liveResult.time_ms}ms` : ''}
+                  </p>
+                  {liveResult.reward > 0 && (
+                    <div className="bg-green-900/30 border border-green-800/40 rounded-xl px-4 py-3 mb-4">
+                      <p className="text-xs text-gray-500 mb-0.5">Reward credited to wallet</p>
+                      <p className="text-3xl font-black text-green-400">+${Number(liveResult.reward).toFixed(2)}</p>
+                    </div>
+                  )}
+                  {liveResult.ai_feedback && (
+                    <div className="bg-blue-900/20 border border-blue-800/30 rounded-xl p-4 mb-4 text-left">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Brain className="w-4 h-4 text-blue-400" />
+                        <span className="text-xs font-bold text-blue-400 uppercase tracking-wider">AI Feedback</span>
+                      </div>
+                      <p className="text-gray-300 text-xs leading-relaxed mb-1.5">{liveResult.ai_feedback.overall}</p>
+                      {liveResult.ai_feedback.tip && (
+                        <p className="text-xs text-yellow-400 flex items-start gap-1.5">
+                          <Zap className="w-3.5 h-3.5 shrink-0 mt-0.5" />{liveResult.ai_feedback.tip}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  <div className="flex gap-3">
+                    {nextUnsolved && (
+                      <button onClick={() => router.push(`/challenges/${nextUnsolved.id}`)}
+                        className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-green-600 hover:bg-green-500 text-white text-sm font-bold rounded-xl">
+                        Next <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                    <button onClick={() => router.push('/challenges')}
+                      className="flex-1 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm font-semibold rounded-xl">
+                      All Challenges
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ══ LIVE SCORE PANEL — TOP ══════════════════════════ */}
+          {sessionReady && !timedOut && (
+            <div className="shrink-0 border-b border-gray-800 bg-gray-900/60">
+
+              {/* Row 1: score ring + test dots + status */}
+              <div className="px-4 py-2.5 flex items-center gap-4">
+
+                {/* Score ring */}
+                <div className="relative w-11 h-11 shrink-0">
+                  <svg className="w-11 h-11 -rotate-90" viewBox="0 0 44 44">
+                    <circle cx="22" cy="22" r="18" fill="none" stroke="#1f2937" strokeWidth="4" />
+                    <circle cx="22" cy="22" r="18" fill="none"
+                      stroke={ringColor} strokeWidth="4" strokeLinecap="round"
+                      strokeDasharray={`${CIRC}`}
+                      strokeDashoffset={`${CIRC * (1 - score / 100)}`}
+                      style={{ transition: 'stroke-dashoffset 0.5s ease, stroke 0.3s ease' }}
+                    />
+                  </svg>
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className={`text-[10px] font-black leading-none ${scoreTextColor}`}>{score}%</span>
+                  </div>
+                </div>
+
+                {/* Test dots */}
+                <div className="flex-1 min-w-0">
+                  {liveResult?.results?.length > 0 ? (
+                    <>
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {liveResult.results.map((r: any, i: number) => (
+                          <div key={i}
+                            title={r.passed ? `Test ${i+1}: Passed (${r.time_ms}ms)` : `Test ${i+1}: Expected "${r.expected}" · got "${r.stdout||'no output'}"`}
+                            className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black cursor-default ${r.passed?'bg-green-500 text-white':'bg-red-500/70 text-white border border-red-400/40'}`}>
+                            {r.passed ? '✓' : '✗'}
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-[11px] text-gray-500 mt-0.5">
+                        {passed}/{total} passed · check #{checkCount}
+                        {liveResult.time_ms ? ` · ${liveResult.time_ms}ms` : ''}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-xs text-gray-600">
+                      {hasEdited ? 'Checking your code…' : 'Start typing — score updates as you write'}
+                    </p>
+                  )}
+                </div>
+
+                {/* AI tip (compact) */}
+                {liveResult?.ai_feedback?.tip && !solved && (
+                  <div className="hidden lg:flex items-start gap-1.5 max-w-[220px] text-[11px] text-yellow-400/80 shrink-0">
+                    <Zap className="w-3 h-3 shrink-0 mt-0.5" />
+                    <span className="line-clamp-2">{liveResult.ai_feedback.tip}</span>
+                  </div>
+                )}
+
+                {/* Solved badge */}
+                {solved && (
+                  <div className="flex items-center gap-1.5 text-green-400 font-bold text-sm shrink-0">
+                    <CheckCircle className="w-4 h-4" /> Solved!
+                  </div>
+                )}
+              </div>
+
+              {/* Row 2: Auto-check countdown bar */}
+              {hasEdited && !solved && (
+                <div className="px-4 pb-2 flex items-center gap-3">
+                  {checking ? (
+                    <div className="flex items-center gap-2 text-[11px] text-green-400">
+                      <Spin cls="w-3 h-3 text-green-400" /> Running test cases…
+                    </div>
+                  ) : countdown !== null && countdown > 0 ? (
+                    <>
+                      <span className="text-[11px] text-cyan-400 shrink-0 w-28">
+                        Auto-check in <span className="font-black">{countdown}s</span>
+                      </span>
+                      <div className="flex-1 h-1 bg-gray-800 rounded-full overflow-hidden">
+                        <div className="h-1 bg-cyan-500/70 rounded-full transition-all duration-500"
+                          style={{ width: `${((AUTO_DELAY - countdown) / AUTO_DELAY) * 100}%` }} />
+                      </div>
+                    </>
+                  ) : liveResult && liveResult.status !== 'accepted' ? (
+                    <span className="text-[11px] text-gray-500">Edit your code to trigger another check</span>
+                  ) : null}
+
+                  {/* First failed test diff */}
+                  {liveResult && !checking && liveResult.status !== 'accepted' && (() => {
+                    const f = liveResult.results?.find((r: any) => !r.passed && r.is_sample);
+                    return f ? (
+                      <span className="text-[11px] text-gray-500 truncate hidden sm:block ml-auto">
+                        Expected <span className="text-yellow-400 font-mono">{f.expected}</span>
+                        {' · '}got <span className="text-red-400 font-mono">{f.stdout || 'empty'}</span>
+                      </span>
+                    ) : null;
+                  })()}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ══ TOOLBAR ══════════════════════════════════════════ */}
+          <div className="px-4 py-2 border-b border-gray-800 flex items-center justify-between shrink-0 gap-2">
+            <div className="flex items-center gap-1">
+              <button onClick={() => prevChallenge && router.push(`/challenges/${prevChallenge.id}`)} disabled={!prevChallenge}
+                className="p-1.5 text-gray-500 hover:text-white hover:bg-gray-800 rounded-lg disabled:opacity-30 transition-colors">
                 <ChevronLeft className="w-4 h-4" />
               </button>
-              <button onClick={() => nextChallenge && router.push(`/challenges/${nextChallenge.id}`)}
-                disabled={!nextChallenge} title={nextChallenge?.title}
-                className="btn-ghost btn-sm disabled:opacity-30 px-2">
+              <button onClick={() => nextChallenge && router.push(`/challenges/${nextChallenge.id}`)} disabled={!nextChallenge}
+                className="p-1.5 text-gray-500 hover:text-white hover:bg-gray-800 rounded-lg disabled:opacity-30 transition-colors">
                 <ChevronRight className="w-4 h-4" />
               </button>
-
-              <div className="w-px h-5 bg-gray-700 mx-1" />
-
-              <select value={language} onChange={e => onLanguageChange(e.target.value)}
-                disabled={!betReady || timedOut}
-                className="bg-gray-800 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-green-500 disabled:opacity-40 min-w-[130px]">
-                {LANGUAGES.map(l => (
-                  <option key={l.id} value={l.id} disabled={!l.available}>
-                    {l.label}{!l.available ? ' (soon)' : ''}
-                  </option>
-                ))}
+              <div className="w-px h-4 bg-gray-700 mx-1" />
+              <button onClick={handleShuffle} disabled={shuffleLoading} title="Random challenge"
+                className="p-1.5 text-purple-400 hover:bg-purple-900/20 rounded-lg disabled:opacity-50 transition-colors">
+                {shuffleLoading ? <Spin /> : <Shuffle className="w-3.5 h-3.5" />}
+              </button>
+              <button onClick={handleAiGenerate} disabled={aiLoading} title="AI-generated challenge"
+                className="p-1.5 text-cyan-400 hover:bg-cyan-900/20 rounded-lg disabled:opacity-50 transition-colors">
+                {aiLoading ? <Spin /> : <Sparkles className="w-3.5 h-3.5" />}
+              </button>
+              <div className="w-px h-4 bg-gray-700 mx-1" />
+              <select value={language} onChange={e => onLangChange(e.target.value)} disabled={!sessionReady || timedOut}
+                className="bg-gray-800 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-green-500 disabled:opacity-40 min-w-[120px]">
+                {LANGUAGES.map(l => <option key={l.id} value={l.id} disabled={!l.available}>{l.label}{!l.available?' (soon)':''}</option>)}
               </select>
             </div>
 
-            {/* CENTER: Countdown Timer */}
-            <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2">
-              {timeLeft !== null && !alreadySolved && !timedOut && (
-                <div className={`flex items-center gap-1.5 px-3 py-1 rounded-lg bg-gray-900 border border-gray-700 ${timerPulse}`}>
+            {/* Centre: session timer */}
+            <div className="absolute left-1/2 -translate-x-1/2">
+              {timeLeft !== null && !solved && !timedOut && (
+                <div className={`flex items-center gap-1.5 px-3 py-1 rounded-lg border ${timerBg} ${timerPulse}`}>
                   <Timer className={`w-3.5 h-3.5 ${timerColor}`} />
-                  <span className={`font-mono text-base font-bold tracking-widest ${timerColor}`}>
-                    {formatTime(timeLeft)}
-                  </span>
+                  <span className={`font-black font-mono text-sm tracking-widest ${timerColor}`}>{fmt(timeLeft)}</span>
                 </div>
               )}
             </div>
 
-            <div className="flex items-center gap-2">
-              <button onClick={() => { setCode(TEMPLATES[language] || ''); setResult(null); }}
-                disabled={!betReady || timedOut}
-                className="btn-ghost btn-sm disabled:opacity-40">
-                <RotateCcw className="w-3.5 h-3.5" /> Reset
-              </button>
-              {alreadySolved ? (
-                <button onClick={() => nextUnsolved && router.push(`/challenges/${nextUnsolved.id}`)}
-                  className="btn-primary btn-sm">
-                  Next Challenge <ChevronRight className="w-3.5 h-3.5" />
-                </button>
-              ) : (
-                <button onClick={submit} disabled={submitting || !betReady || timedOut}
-                  className="btn-primary btn-sm disabled:opacity-40">
-                  <Play className="w-3.5 h-3.5" />
-                  {submitting ? t('chd_running') : t('chd_submit')}
-                </button>
-              )}
-            </div>
+            {/* Right: reset */}
+            <button onClick={() => { const g=GUIDES[language]||''; setCode(g); codeRef.current=g; keystrokesRef.current=0; setHasEdited(false); setLiveResult(null); stopTicker(); }}
+              disabled={!sessionReady || timedOut || solved}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg text-xs font-semibold transition-colors disabled:opacity-40">
+              <RotateCcw className="w-3.5 h-3.5" /> Reset
+            </button>
           </div>
 
-          {/* Monaco */}
-          <div className="flex-1 overflow-hidden">
+          {/* ══ MONACO EDITOR ════════════════════════════════════ */}
+          <div className="flex-1 overflow-hidden min-h-0">
             <MonacoEditor
               height="100%"
-              language={language}
+              language={language === 'html' ? 'html' : language}
               value={code}
-              onChange={handleEditorChange}
+              onChange={onCodeChange}
               onMount={onEditorMount}
               theme="vs-dark"
               options={{
                 fontSize: 14, minimap: { enabled: false }, scrollBeyondLastLine: false,
                 wordWrap: 'on', tabSize: 2, padding: { top: 12 },
-                readOnly: !betReady || alreadySolved || timedOut,
+                readOnly: !sessionReady || solved || timedOut,
+                placeholder: 'Write your solution here…',
               }}
             />
           </div>
 
-          {/* Result panel */}
-          {(result || submitting) && (
-            <div className="border-t border-gray-800 max-h-72 overflow-y-auto shrink-0">
-              {submitting && (
-                <div className="p-5 flex items-center gap-3 text-gray-400">
-                  <div className="w-4 h-4 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
-                  Running against test cases...
-                </div>
-              )}
-
-              {result && !submitting && (
-                <div className="p-4 space-y-3">
-                  {result.error ? (
-                    <div className="flex items-center gap-2 text-red-400">
-                      <AlertTriangle className="w-4 h-4 shrink-0" />
-                      <span className="text-sm">{result.error}</span>
-                    </div>
-                  ) : (
-                    <>
-                      <div className={`flex items-center gap-3 p-3 rounded-xl ${
-                        result.status === 'accepted'           ? 'bg-green-900/30  border border-green-800'  :
-                        result.status === 'cheating_suspected' ? 'bg-orange-900/30 border border-orange-800' :
-                                                                  'bg-red-900/20    border border-red-800/50'
-                      }`}>
-                        {result.status === 'accepted'
-                          ? <CheckCircle className="w-5 h-5 text-green-400 shrink-0" />
-                          : <XCircle    className="w-5 h-5 text-red-400   shrink-0" />}
-                        <div className="flex-1">
-                          <p className={`font-bold text-sm capitalize ${result.status === 'accepted' ? 'text-green-400' : result.status === 'cheating_suspected' ? 'text-orange-400' : 'text-red-400'}`}>
-                            {result.status.replace(/_/g, ' ')}
-                          </p>
-                          <p className="text-xs text-gray-500 mt-0.5">
-                            {result.passed}/{result.total} passed · {result.score}%{result.time_ms ? ` · ${result.time_ms}ms` : ''}
-                          </p>
-                        </div>
-                        {result.status === 'accepted' && nextUnsolved && (
-                          <button onClick={() => router.push(`/challenges/${nextUnsolved.id}`)}
-                            className="shrink-0 px-3 py-1.5 rounded-lg bg-green-700 hover:bg-green-600 text-white text-xs font-bold transition-colors flex items-center gap-1">
-                            Next <ChevronRight className="w-3 h-3" />
-                          </button>
-                        )}
-                      </div>
-
-                      {result.bet?.resolved && (
-                        <div className={`flex items-center gap-3 p-3 rounded-xl ${result.bet.won ? 'bg-amber-900/30 border border-amber-700' : 'bg-gray-800 border border-gray-700'}`}>
-                          {result.bet.won
-                            ? <TrendingUp   className="w-5 h-5 text-amber-400 shrink-0" />
-                            : <TrendingDown className="w-5 h-5 text-gray-500 shrink-0" />}
-                          <div>
-                            {result.bet.won ? (
-                              <>
-                                <p className="font-black text-amber-400 text-sm">Bet won!</p>
-                                <p className="text-xs text-amber-300/80">{Number(result.bet.payout).toLocaleString()} RWF credited to your wallet</p>
-                              </>
-                            ) : (
-                              <>
-                                <p className="font-semibold text-gray-400 text-sm">Bet lost</p>
-                                <p className="text-xs text-gray-500">Better luck next time!</p>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      )}
-
-                      {result.results?.length > 0 && (
-                        <div className="space-y-1.5">
-                          {result.results.map((r: any) =>
-                            r.is_sample ? (
-                              <div key={r.test_case} className={`rounded-lg p-3 text-xs ${r.passed ? 'bg-green-900/20' : 'bg-red-900/20'}`}>
-                                <div className="flex items-center justify-between mb-1.5">
-                                  <span className={`font-semibold ${r.passed ? 'text-green-400' : 'text-red-400'}`}>
-                                    {r.passed ? '✓' : '✗'} Test {r.test_case}
-                                  </span>
-                                  <span className="text-gray-500">{r.time_ms}ms</span>
-                                </div>
-                                {!r.passed && r.stdout !== undefined && (
-                                  <div className="space-y-1">
-                                    <p className="text-gray-500">Expected: <span className="text-yellow-300 font-mono">{r.expected}</span></p>
-                                    <p className="text-gray-500">Got: <span className="text-red-300 font-mono">{r.stdout || '(empty)'}</span></p>
-                                  </div>
-                                )}
-                              </div>
-                            ) : null
-                          )}
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
         </div>
       </div>
     </div>

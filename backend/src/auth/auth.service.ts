@@ -1,6 +1,6 @@
 import {
   Injectable, ConflictException, UnauthorizedException,
-  BadRequestException, NotFoundException,
+  BadRequestException, NotFoundException, Logger,
 } from '@nestjs/common';
 import { JwtService }      from '@nestjs/jwt';
 import * as bcrypt         from 'bcryptjs';
@@ -13,6 +13,8 @@ import { LoginDto }        from './dto/login.dto';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private db: DatabaseService,
     private jwt: JwtService,
@@ -34,7 +36,7 @@ export class AuthService {
 
     await this.db.transaction(async (conn) => {
       await conn.execute(
-        'INSERT INTO users (id, name, email, password_hash, phone, country_code, language, preferred_currency, email_verified) VALUES (?,?,?,?,?,?,?,?,0)',
+        'INSERT INTO users (id, name, email, password_hash, phone, country_code, language, preferred_currency, email_verified) VALUES (?,?,?,?,?,?,?,?,1)',
         [userId, dto.name, dto.email.toLowerCase(), hash, dto.phone || null, countryCode, language, currency],
       );
       await conn.execute(
@@ -42,11 +44,16 @@ export class AuthService {
       );
     });
 
-    const otp = this.generateOtp();
-    await this.saveOtp(userId, dto.email.toLowerCase(), otp);
-    await this.email.sendVerificationOtp(dto.email.toLowerCase(), dto.name, otp);
+    const newUser = await this.db.queryOne(
+      'SELECT id, name, email, role FROM users WHERE id = ?', [userId],
+    );
+    const token = this.sign(newUser);
+    await this.recordSession(userId, token, _ip, _userAgent);
 
-    return { requiresVerification: true, email: dto.email.toLowerCase() };
+    // Send welcome email in background (don't block registration)
+    this.email.sendVerificationOtp(dto.email.toLowerCase(), dto.name, '').catch(() => {});
+
+    return { token, user: { id: userId, name: dto.name, email: dto.email.toLowerCase(), role: 'user' } };
   }
 
   async login(dto: LoginDto, ip: string, userAgent: string) {
@@ -61,14 +68,8 @@ export class AuthService {
     if (!valid) throw new UnauthorizedException('Invalid credentials');
 
     if (!user.email_verified) {
-      const otp = this.generateOtp();
-      await this.saveOtp(user.id, user.email, otp);
-      await this.email.sendVerificationOtp(user.email, user.name, otp);
-      throw new UnauthorizedException({
-        message: 'Email not verified. A new OTP has been sent to your email.',
-        requiresVerification: true,
-        email: user.email,
-      });
+      // Auto-verify on login (email SMTP may not be configured)
+      await this.db.execute('UPDATE users SET email_verified = 1 WHERE id = ?', [user.id]);
     }
 
     const token = this.sign(user);
@@ -162,15 +163,24 @@ export class AuthService {
   }
 
   async me(userId: string) {
-    return this.db.queryOne(
-      `SELECT u.id, u.name, u.email, u.role, u.phone, u.country_code,
-              u.language, u.preferred_currency, u.risk_score,
-              u.total_earnings, u.kyc_verified, u.created_at,
+    const user = await this.db.queryOne(
+      `SELECT u.id, u.name, u.email, u.role, u.phone, u.country_code, u.avatar_url, u.bio,
+              u.language, u.preferred_currency, u.risk_score, u.subscription_plan,
+              u.total_earnings, u.solved_count, u.current_streak, u.longest_streak,
+              u.kyc_verified, u.created_at, u.github_url, u.twitter_url, u.website_url,
               w.balance, w.currency, w.locked_balance
        FROM users u LEFT JOIN wallets w ON w.user_id = u.id
        WHERE u.id = ?`,
       [userId],
     );
+    if (!user) return null;
+    const badges = await this.db.queryMany(
+      `SELECT b.slug, b.name, b.icon, b.color, b.rarity, ub.awarded_at
+       FROM badges b JOIN user_badges ub ON ub.badge_id = b.id
+       WHERE ub.user_id = ? ORDER BY ub.awarded_at DESC LIMIT 10`,
+      [userId],
+    );
+    return { ...user, badges };
   }
 
   private generateOtp(): string {

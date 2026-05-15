@@ -19,8 +19,30 @@ export class ChallengesController {
 
   // ── Random challenge (must be before /:slugOrId) ──────────────
   @Get('random')
-  getRandom(@Req() req: any) {
-    return this.svc.getRandomChallenge(req.user.id);
+  getRandom(@Req() req: any, @Query('difficulty') diff?: string, @Query('category') cat?: string) {
+    return this.svc.getRandomChallenge(req.user.id, diff, cat);
+  }
+
+  // ── AI Challenge Generation ────────────────────────────────────
+  @Post('ai-generate')
+  generateAi(
+    @Req() req: any,
+    @Body('difficulty') difficulty: 'easy' | 'medium' | 'hard' = 'medium',
+    @Body('category') category?: string,
+  ) {
+    return this.svc.generateAiChallenge(difficulty, category, req.user.id);
+  }
+
+  // ── AI Recommendations ────────────────────────────────────────
+  @Get('recommendations')
+  getRecommendations(@Req() req: any) {
+    return this.svc.getRecommendations(req.user.id);
+  }
+
+  // ── User Public Profile ───────────────────────────────────────
+  @Get('profile/:userId')
+  getUserProfile(@Param('userId') userId: string) {
+    return this.svc.getUserProfile(userId);
   }
 
   // ── List & CRUD ───────────────────────────────────────────────

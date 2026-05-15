@@ -1,44 +1,40 @@
 import { Injectable, ForbiddenException } from '@nestjs/common';
 import { v4 as uuid } from 'uuid';
 import { DatabaseService } from '../database/database.service';
-import { BetsService }    from '../bets/bets.service';
 
-const SESSION_MS = 3 * 60 * 1000; // 3 minutes
+const SESSION_MS = 5 * 60 * 1000;
 
 @Injectable()
 export class SessionsService {
-  constructor(
-    private db:   DatabaseService,
-    private bets: BetsService,
-  ) {}
+  constructor(private db: DatabaseService) {}
 
   async start(userId: string, challengeId: string) {
     const existing = await this.db.queryOne<any>(
-      `SELECT id, expires_at FROM challenge_sessions
+      `SELECT id, expires_at, (expires_at > NOW()) AS still_valid FROM challenge_sessions
        WHERE user_id=? AND challenge_id=? AND status='active'
        ORDER BY started_at DESC LIMIT 1`,
       [userId, challengeId],
     );
 
     if (existing) {
-      if (new Date(existing.expires_at) > new Date()) {
-        return { session_id: existing.id, expires_at: new Date(existing.expires_at).toISOString(), resumed: true };
+      if (existing.still_valid) {
+        return { session_id: existing.id, expires_at: existing.expires_at, resumed: true };
       }
-      // Expired — forfeit bet and mark timed_out
       await this.db.execute(
         `UPDATE challenge_sessions SET status='timed_out' WHERE id=?`, [existing.id],
       );
-      await this.bets.resolveBet(userId, challengeId, `timeout-${existing.id}`, false).catch(() => null);
     }
 
     const sessionId = uuid();
-    const expiresAt = new Date(Date.now() + SESSION_MS);
     await this.db.execute(
       `INSERT INTO challenge_sessions (id, user_id, challenge_id, expires_at)
-       VALUES (?,?,?,?)`,
-      [sessionId, userId, challengeId, expiresAt.toISOString()],
+       VALUES (?,?,?, DATE_ADD(NOW(), INTERVAL 300 SECOND))`,
+      [sessionId, userId, challengeId],
     );
-    return { session_id: sessionId, expires_at: expiresAt.toISOString(), resumed: false };
+    const created = await this.db.queryOne<any>(
+      `SELECT expires_at FROM challenge_sessions WHERE id=?`, [sessionId],
+    );
+    return { session_id: sessionId, expires_at: created?.expires_at, resumed: false };
   }
 
   async getActive(userId: string, challengeId: string) {
@@ -51,11 +47,16 @@ export class SessionsService {
   }
 
   async validateOrThrow(userId: string, challengeId: string) {
-    const session = await this.getActive(userId, challengeId);
-    if (!session) return; // no session = no time limit
-    if (new Date(session.expires_at) <= new Date()) {
-      await this.db.execute(`UPDATE challenge_sessions SET status='timed_out' WHERE id=?`, [session.id]);
-      await this.bets.resolveBet(userId, challengeId, `timeout-${session.id}`, false).catch(() => null);
+    const row = await this.db.queryOne<any>(
+      `SELECT id, (expires_at > NOW()) AS still_valid
+       FROM challenge_sessions
+       WHERE user_id=? AND challenge_id=? AND status='active'
+       ORDER BY started_at DESC LIMIT 1`,
+      [userId, challengeId],
+    );
+    if (!row) return;
+    if (!row.still_valid) {
+      await this.db.execute(`UPDATE challenge_sessions SET status='timed_out' WHERE id=?`, [row.id]);
       throw new ForbiddenException('time_limit_exceeded');
     }
   }
@@ -74,7 +75,6 @@ export class SessionsService {
        WHERE user_id=? AND challenge_id=? AND status='active'`,
       [userId, challengeId],
     );
-    await this.bets.resolveBet(userId, challengeId, `forfeit-${userId}-${Date.now()}`, false).catch(() => null);
     return { forfeited: true };
   }
 }

@@ -15,6 +15,40 @@ export class AiService {
     }
   }
 
+  async generateChallenge(difficulty: 'easy' | 'medium' | 'hard', category?: string): Promise<{
+    title: string; description: string; category: string;
+    test_cases: { input: string; expected_output: string; is_sample: boolean; explanation?: string }[];
+  } | null> {
+    if (!this.genAI) return null;
+    const prompt = `Generate a unique competitive programming challenge.
+Difficulty: ${difficulty}
+Category: ${category || 'any (arrays, strings, math, sorting, dp, graphs, etc.)'}
+
+Respond ONLY in this exact JSON format (no markdown):
+{
+  "title": "Short descriptive title",
+  "description": "Full problem statement. Explain input format (read from stdin), constraints, and output format. Be precise about newlines and whitespace.",
+  "category": "category name",
+  "test_cases": [
+    {"input": "exact stdin input", "expected_output": "exact stdout output", "is_sample": true, "explanation": "why this is the answer"},
+    {"input": "another input", "expected_output": "another output", "is_sample": true},
+    {"input": "edge case input", "expected_output": "edge output", "is_sample": false},
+    {"input": "harder input", "expected_output": "harder output", "is_sample": false},
+    {"input": "stress input", "expected_output": "stress output", "is_sample": false}
+  ]
+}`;
+    try {
+      const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      const result = await model.generateContent(prompt);
+      const text = result.response.text().trim();
+      const json = text.replace(/^```json?\s*/i, '').replace(/```$/, '').trim();
+      return JSON.parse(json);
+    } catch (err) {
+      this.logger.error('Gemini generate error', err.message);
+      return null;
+    }
+  }
+
   async generateFeedback(params: {
     challengeTitle: string;
     challengeDescription: string;

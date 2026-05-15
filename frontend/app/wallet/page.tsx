@@ -43,6 +43,10 @@ export default function WalletPage() {
   const [mobile, setMobile] = useState({ phone: '', amount: '' });
   // Amount
   const [amount, setAmount] = useState('');
+  // Withdrawal requests
+  const [withdrawals,    setWithdrawals]    = useState<any[]>([]);
+  const [withdrawForm,   setWithdrawForm]   = useState({ amount: '', method: 'bank', account: '' });
+  const [withdrawTab,    setWithdrawTab]    = useState<'instant'|'request'>('request');
 
   const user = getUser();
   const userCountry = COUNTRIES.find(c => c.code === (user?.country_code || 'US'));
@@ -54,8 +58,35 @@ export default function WalletPage() {
   const load = () => {
     api.get('/wallet').then(r => setWallet(r.data)).catch(() => {});
     api.get('/wallet/transactions').then(r => setTxns(r.data.transactions || [])).catch(() => {});
+    api.get('/wallet/withdrawals').then(r => setWithdrawals(r.data || [])).catch(() => {});
   };
   useEffect(load, []);
+
+  const handleWithdrawRequest = async (e: React.FormEvent) => {
+    e.preventDefault(); setLoading(true);
+    try {
+      await api.post('/wallet/withdraw-request', {
+        amount: Number(withdrawForm.amount),
+        method: withdrawForm.method,
+        account_details: { account: withdrawForm.account },
+      });
+      notify('Withdrawal request submitted! Admin will process it within 24h.', 'success');
+      setWithdrawForm({ amount: '', method: 'bank', account: '' });
+      load();
+    } catch (e: any) {
+      notify(e.response?.data?.message || 'Request failed', 'error');
+    } finally { setLoading(false); }
+  };
+
+  const cancelWithdrawal = async (id: string) => {
+    try {
+      await api.delete(`/wallet/withdrawals/${id}`);
+      notify('Withdrawal request cancelled. Funds unlocked.', 'success');
+      load();
+    } catch (e: any) {
+      notify(e.response?.data?.message || 'Cancel failed', 'error');
+    }
+  };
 
   const notify = (m: string, type: 'success'|'error'|'info' = 'info') => {
     setMsg(m); setMsgType(type); setTimeout(() => setMsg(''), 6000);
@@ -211,36 +242,69 @@ export default function WalletPage() {
 
         {/* Transaction history */}
         {tab === 'overview' && (
-          <div className="card overflow-hidden">
-            {txns.length === 0 ? (
-              <div className="p-12 text-center text-gray-500">{t('wallet_no_txns')}</div>
-            ) : (
-              <div className="divide-y divide-gray-800">
-                {txns.map((tx: any) => (
-                  <div key={tx.id} className="px-4 py-3.5 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <span className="text-xl">{TX_ICON[tx.type] || '📋'}</span>
-                      <div>
-                        <p className="font-medium text-white text-sm capitalize">{tx.type.replace(/_/g, ' ')}</p>
-                        <p className="text-xs text-gray-500 flex items-center gap-1">
-                          <Clock className="w-3 h-3" />{new Date(tx.created_at).toLocaleString()}
-                          {tx.payment_provider && <span className="ml-1 badge text-xs">{tx.payment_provider}</span>}
+          <>
+            <div className="card overflow-hidden">
+              {txns.length === 0 ? (
+                <div className="p-12 text-center text-gray-500">{t('wallet_no_txns')}</div>
+              ) : (
+                <div className="divide-y divide-gray-800">
+                  {txns.map((tx: any) => (
+                    <div key={tx.id} className="px-4 py-3.5 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <span className="text-xl">{TX_ICON[tx.type] || '📋'}</span>
+                        <div>
+                          <p className="font-medium text-white text-sm capitalize">{tx.type.replace(/_/g, ' ')}</p>
+                          <p className="text-xs text-gray-500 flex items-center gap-1">
+                            <Clock className="w-3 h-3" />{new Date(tx.created_at).toLocaleString()}
+                            {tx.payment_provider && <span className="ml-1 badge text-xs">{tx.payment_provider}</span>}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className={`font-bold ${isCredit(tx.type) ? 'text-green-400' : 'text-red-400'}`}>
+                          {isCredit(tx.type) ? '+' : '-'}{currencySymbol}{Number(tx.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </p>
+                        <span className={`badge text-xs ${tx.status === 'completed' ? 'badge-green' : tx.status === 'pending' ? 'badge-yellow' : ''}`}>
+                          {tx.status}
+                        </span>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <p className={`font-bold ${isCredit(tx.type) ? 'text-green-400' : 'text-red-400'}`}>
-                        {isCredit(tx.type) ? '+' : '-'}{currencySymbol}{Number(tx.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                      </p>
-                      <span className={`badge text-xs ${tx.status === 'completed' ? 'badge-green' : tx.status === 'pending' ? 'badge-yellow' : ''}`}>
-                        {tx.status}
-                      </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Withdrawal requests */}
+            {withdrawals.length > 0 && (
+              <div className="card overflow-hidden">
+                <div className="px-4 py-3 border-b border-gray-800">
+                  <p className="text-sm font-semibold text-gray-400 uppercase tracking-wider">Withdrawal Requests</p>
+                </div>
+                <div className="divide-y divide-gray-800">
+                  {withdrawals.map((w: any) => (
+                    <div key={w.id} className="px-4 py-3 flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-white font-medium">{currencySymbol}{Number(w.amount).toFixed(2)} via {w.method}</p>
+                        <p className="text-xs text-gray-500">{new Date(w.created_at).toLocaleDateString()}</p>
+                        {w.admin_note && <p className="text-xs text-amber-400 mt-0.5">{w.admin_note}</p>}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`badge text-xs ${w.status === 'approved' ? 'badge-green' : w.status === 'rejected' ? 'bg-red-900/30 text-red-400' : 'badge-yellow'}`}>
+                          {w.status}
+                        </span>
+                        {w.status === 'pending' && (
+                          <button onClick={() => cancelWithdrawal(w.id)}
+                            className="text-xs text-red-400 hover:text-red-300 transition-colors">
+                            Cancel
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             )}
-          </div>
+          </>
         )}
 
         {/* Deposit / Withdraw panel */}
@@ -253,12 +317,99 @@ export default function WalletPage() {
               <p className="text-gray-500 text-sm">
                 {tab === 'deposit'
                   ? `${t('wallet_min_deposit')}: ${currencySymbol}5`
-                  : `${t('wallet_min_withdraw')}: ${currencySymbol}10 · Balance: ${currencySymbol}${Number(wallet?.balance || 0).toFixed(2)}`}
+                  : `${t('wallet_min_withdraw')}: ${currencySymbol}5 · Balance: ${currencySymbol}${Number(wallet?.balance || 0).toFixed(2)}`}
               </p>
             </div>
 
-            {/* Provider selection */}
-            <div>
+            {/* Withdraw sub-tabs */}
+            {tab === 'withdraw' && (
+              <div className="flex border-b border-gray-800 gap-0">
+                {([['request', '📋 Withdrawal Request'], ['instant', '⚡ Instant (Mobile)'], ] as const).map(([k, label]) => (
+                  <button key={k} onClick={() => setWithdrawTab(k)}
+                    className={`pb-2.5 mr-5 text-sm font-medium border-b-2 transition-colors ${withdrawTab === k ? 'border-green-500 text-green-400' : 'border-transparent text-gray-500 hover:text-gray-300'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Formal Withdrawal Request Form */}
+            {tab === 'withdraw' && withdrawTab === 'request' && (
+              <form onSubmit={handleWithdrawRequest} className="space-y-4">
+                <div className="bg-blue-900/20 border border-blue-800/30 rounded-xl p-3 text-xs text-blue-300">
+                  💡 Withdrawal requests are reviewed by our team within 24 hours. Funds are locked until processed.
+                </div>
+                <div>
+                  <label className="label">Amount ({currency})</label>
+                  <input type="number" value={withdrawForm.amount}
+                    onChange={e => setWithdrawForm(p => ({ ...p, amount: e.target.value }))}
+                    className="input" placeholder={`Min ${currencySymbol}5`}
+                    min={5} max={wallet?.balance} step="0.01" required />
+                  <p className="text-xs text-gray-600 mt-1">Available: {currencySymbol}{Number(wallet?.balance || 0).toFixed(2)}</p>
+                </div>
+                <div>
+                  <label className="label">Withdrawal Method</label>
+                  <select value={withdrawForm.method}
+                    onChange={e => setWithdrawForm(p => ({ ...p, method: e.target.value }))}
+                    className="input">
+                    <option value="bank">Bank Transfer</option>
+                    <option value="paypal">PayPal</option>
+                    <option value="mtn">MTN MoMo</option>
+                    <option value="airtel">Airtel Money</option>
+                    <option value="crypto">Crypto (USDT)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Account Details</label>
+                  <input value={withdrawForm.account}
+                    onChange={e => setWithdrawForm(p => ({ ...p, account: e.target.value }))}
+                    className="input" placeholder={
+                      withdrawForm.method === 'bank'   ? 'Account number / IBAN' :
+                      withdrawForm.method === 'paypal' ? 'PayPal email address' :
+                      withdrawForm.method === 'crypto' ? 'USDT wallet address (TRC20)' :
+                      'Phone number (e.g. 07XXXXXXXX)'
+                    } required />
+                </div>
+                <button type="submit" disabled={!!loading} className="btn-primary w-full justify-center py-3">
+                  {loading ? <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <>Submit Withdrawal Request</>}
+                </button>
+              </form>
+            )}
+
+            {/* Instant withdraw (mobile money) — only shown when tab is instant */}
+            {tab === 'withdraw' && withdrawTab === 'instant' && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-2">
+                  {(['mtn', 'airtel'] as PaymentProvider[]).map(p => (
+                    <button key={p} type="button" onClick={() => setProvider(p)}
+                      className={`p-3 rounded-xl border text-sm font-semibold flex items-center gap-2 transition-all ${provider === p ? 'border-green-500 bg-green-900/20 text-green-300' : 'border-gray-700 bg-gray-800 text-gray-400'}`}>
+                      <span className="text-lg">{p === 'mtn' ? '📱' : '📲'}</span>
+                      {p === 'mtn' ? 'MTN MoMo' : 'Airtel Money'}
+                    </button>
+                  ))}
+                </div>
+                {(provider === 'mtn' || provider === 'airtel') && (
+                  <form onSubmit={handleMobileWithdraw} className="space-y-4">
+                    <div>
+                      <label className="label">Phone Number</label>
+                      <input value={mobile.phone} onChange={e => setMobile(p => ({ ...p, phone: e.target.value }))}
+                        className="input" placeholder="07XXXXXXXX" required type="tel" />
+                    </div>
+                    <div>
+                      <label className="label">Amount ({currency})</label>
+                      <input type="number" value={mobile.amount} onChange={e => setMobile(p => ({ ...p, amount: e.target.value }))}
+                        className="input" placeholder="Min 1,000 RWF" min={1000} max={wallet?.balance} required />
+                    </div>
+                    <button type="submit" disabled={!!loading} className="btn-primary w-full justify-center py-3">
+                      {loading ? 'Processing...' : `Withdraw via ${provider === 'mtn' ? 'MTN MoMo' : 'Airtel Money'}`}
+                    </button>
+                  </form>
+                )}
+              </div>
+            )}
+
+            {/* Provider selection — deposit only */}
+            {tab === 'deposit' && <div>
               <p className="text-xs text-gray-500 uppercase tracking-wider mb-3">Payment Method</p>
               <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
                 {providers.map(p => (
@@ -269,11 +420,11 @@ export default function WalletPage() {
                   </button>
                 ))}
               </div>
-            </div>
+            </div>}
 
-            {/* Card form */}
-            {provider === 'card' && (
-              <form onSubmit={tab === 'deposit' ? handleCardDeposit : handleCardWithdraw} className="space-y-4">
+            {/* Card form — deposit only */}
+            {tab === 'deposit' && provider === 'card' && (
+              <form onSubmit={handleCardDeposit} className="space-y-4">
                 {tab === 'deposit' && (
                   <>
                     <div>
@@ -308,7 +459,7 @@ export default function WalletPage() {
                   <label className="label">Amount ({currency})</label>
                   <input type="number" value={amount} onChange={e => setAmount(e.target.value)}
                     className="input" placeholder={`Min ${currencySymbol}${tab === 'deposit' ? '5' : '10'}`}
-                    min={tab === 'deposit' ? 5 : 10} max={tab === 'withdraw' ? wallet?.balance : undefined} required step="0.01" />
+                    min={5} required step="0.01" />
                 </div>
                 <button type="submit" disabled={loading} className="btn-primary w-full justify-center py-3">
                   <CreditCard className="w-4 h-4" />
@@ -318,8 +469,8 @@ export default function WalletPage() {
               </form>
             )}
 
-            {/* PayPal */}
-            {provider === 'paypal' && (
+            {/* PayPal — deposit only */}
+            {tab === 'deposit' && provider === 'paypal' && (
               <div className="space-y-4">
                 <div>
                   <label className="label">Amount ({currency})</label>
@@ -339,8 +490,8 @@ export default function WalletPage() {
               </div>
             )}
 
-            {/* Crypto */}
-            {provider === 'crypto' && tab === 'deposit' && (
+            {/* Crypto — deposit only */}
+            {tab === 'deposit' && provider === 'crypto' && (
               <div className="space-y-4">
                 <div className="flex gap-2">
                   {(['BTC','USDT','ETH'] as const).map(coin => (
@@ -368,34 +519,9 @@ export default function WalletPage() {
               </div>
             )}
 
-            {/* Crypto withdraw */}
-            {provider === 'crypto' && tab === 'withdraw' && (
-              <div className="space-y-4">
-                <div className="flex gap-2">
-                  {(['BTC','USDT','ETH'] as const).map(coin => (
-                    <button key={coin} type="button" onClick={() => setCryptoCoin(coin)}
-                      className={`flex-1 py-2 rounded-xl border text-sm font-bold transition-all ${cryptoCoin === coin ? 'border-orange-500 bg-orange-900/20 text-orange-300' : 'border-gray-700 bg-gray-800 text-gray-400'}`}>
-                      {coin === 'BTC' ? '₿' : coin === 'USDT' ? '💵' : 'Ξ'} {coin}
-                    </button>
-                  ))}
-                </div>
-                <div>
-                  <label className="label">Your {cryptoCoin} Address</label>
-                  <input className="input font-mono text-xs" placeholder={`Your ${cryptoCoin} wallet address`} required />
-                </div>
-                <div>
-                  <label className="label">Amount (USD equivalent)</label>
-                  <input type="number" value={amount} onChange={e => setAmount(e.target.value)}
-                    className="input" placeholder="Min $10" min={10} max={wallet?.balance} step="0.01" required />
-                </div>
-                <button disabled className="btn-primary w-full justify-center py-3 opacity-50 cursor-not-allowed">
-                  Crypto Withdrawal — Coming Soon
-                </button>
-              </div>
-            )}
 
-            {/* Mobile Money */}
-            {(provider === 'mtn' || provider === 'airtel') && (
+            {/* Mobile Money — deposit only */}
+            {tab === 'deposit' && (provider === 'mtn' || provider === 'airtel') && (
               <>
                 {pending && (
                   <div className="bg-amber-900/20 border border-amber-800 rounded-xl p-4 space-y-3">
@@ -404,7 +530,7 @@ export default function WalletPage() {
                     <button onClick={verifyDeposit} className="btn-primary btn-sm">Check Payment Status</button>
                   </div>
                 )}
-                <form onSubmit={tab === 'deposit' ? handleMobileDeposit : handleMobileWithdraw} className="space-y-4">
+                <form onSubmit={handleMobileDeposit} className="space-y-4">
                   <div>
                     <label className="label">Phone Number</label>
                     <input value={mobile.phone}
@@ -414,18 +540,18 @@ export default function WalletPage() {
                   <div>
                     <label className="label">Amount ({currency})</label>
                     <input type="number" value={mobile.amount} onChange={e => setMobile(p => ({ ...p, amount: e.target.value }))}
-                      className="input" placeholder={`Min ${tab === 'deposit' ? '500' : '1,000'} RWF`}
-                      min={tab === 'deposit' ? 500 : 1000} max={tab === 'withdraw' ? wallet?.balance : undefined} required />
+                      className="input" placeholder="Min 500 RWF"
+                      min={500} required />
                   </div>
-                  <button type="submit" disabled={loading} className="btn-primary w-full justify-center py-3">
-                    {loading ? t('loading') : `${tab === 'deposit' ? 'Deposit' : 'Withdraw'} via ${provider === 'mtn' ? 'MTN MoMo' : 'Airtel Money'}`}
+                  <button type="submit" disabled={!!loading} className="btn-primary w-full justify-center py-3">
+                    {loading ? t('loading') : `Deposit via ${provider === 'mtn' ? 'MTN MoMo' : 'Airtel Money'}`}
                   </button>
                 </form>
               </>
             )}
 
-            {/* Bank transfer */}
-            {provider === 'bank' && (
+            {/* Bank transfer — deposit only */}
+            {tab === 'deposit' && provider === 'bank' && (
               <div className="bg-gray-800 rounded-xl p-5 space-y-3">
                 <p className="text-white font-semibold">Bank Transfer Details</p>
                 <div className="space-y-2 text-sm">

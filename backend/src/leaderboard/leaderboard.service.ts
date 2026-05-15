@@ -7,7 +7,7 @@ export class LeaderboardService {
 
   async getGlobal(limit = 50) {
     return this.db.queryMany(
-      `SELECT u.id, u.name, u.country_code, u.total_earnings,
+      `SELECT u.id, u.name, u.country_code, u.total_earnings, u.current_streak, u.subscription_plan,
               COUNT(CASE WHEN s.status = 'accepted' THEN 1 END) AS problems_solved,
               COUNT(DISTINCT cp.contest_id) AS contests_joined,
               COUNT(CASE WHEN cp.rank_position = 1 THEN 1 END) AS wins
@@ -20,6 +20,50 @@ export class LeaderboardService {
        LIMIT ?`,
       [limit],
     );
+  }
+
+  async getByCountry(countryCode: string, limit = 50) {
+    return this.db.queryMany(
+      `SELECT u.id, u.name, u.country_code, u.total_earnings, u.current_streak,
+              COUNT(CASE WHEN s.status = 'accepted' THEN 1 END) AS problems_solved,
+              COUNT(DISTINCT cp.contest_id) AS contests_joined,
+              COUNT(CASE WHEN cp.rank_position = 1 THEN 1 END) AS wins
+       FROM users u
+       LEFT JOIN submissions s ON s.user_id = u.id
+       LEFT JOIN contest_participants cp ON cp.user_id = u.id
+       WHERE u.role = 'user' AND u.is_banned = 0 AND u.country_code = ?
+       GROUP BY u.id
+       ORDER BY problems_solved DESC, u.total_earnings DESC
+       LIMIT ?`,
+      [countryCode.toUpperCase(), limit],
+    );
+  }
+
+  async getTopCountries() {
+    return this.db.queryMany(
+      `SELECT u.country_code,
+              COUNT(DISTINCT u.id) AS users,
+              SUM(CASE WHEN s.status = 'accepted' THEN 1 ELSE 0 END) AS solved,
+              SUM(u.total_earnings) AS total_earnings
+       FROM users u
+       LEFT JOIN submissions s ON s.user_id = u.id
+       WHERE u.role = 'user' AND u.is_banned = 0 AND u.country_code IS NOT NULL
+       GROUP BY u.country_code
+       ORDER BY solved DESC
+       LIMIT 20`,
+      [],
+    );
+  }
+
+  async getUserRank(userId: string) {
+    const result = await this.db.queryOne(
+      `SELECT COUNT(*) + 1 AS rank FROM users u2
+       WHERE u2.role = 'user' AND u2.is_banned = 0
+         AND (SELECT COUNT(*) FROM submissions s WHERE s.user_id = u2.id AND s.status = 'accepted')
+           > (SELECT COUNT(*) FROM submissions s WHERE s.user_id = ? AND s.status = 'accepted')`,
+      [userId],
+    );
+    return result?.rank || 0;
   }
 
   async getContestLeaderboard(contestId: string) {

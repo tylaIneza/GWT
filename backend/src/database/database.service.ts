@@ -333,6 +333,88 @@ CREATE TABLE IF NOT EXISTS password_resets (
   created_at DATETIME     DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS withdrawal_requests (
+  id              VARCHAR(36)  PRIMARY KEY,
+  user_id         VARCHAR(36)  NOT NULL,
+  amount          DOUBLE       NOT NULL,
+  currency        VARCHAR(10)  NOT NULL DEFAULT 'USD',
+  method          VARCHAR(50)  NOT NULL,
+  account_details TEXT         NOT NULL,
+  status          VARCHAR(20)  NOT NULL DEFAULT 'pending',
+  admin_note      TEXT,
+  processed_by    VARCHAR(36),
+  processed_at    DATETIME,
+  created_at      DATETIME     DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS badges (
+  id          VARCHAR(36)  PRIMARY KEY,
+  slug        VARCHAR(100) UNIQUE NOT NULL,
+  name        VARCHAR(100) NOT NULL,
+  description TEXT,
+  icon        VARCHAR(10)  DEFAULT '🏅',
+  color       VARCHAR(50)  DEFAULT 'bg-yellow-500',
+  rarity      VARCHAR(20)  DEFAULT 'common',
+  created_at  DATETIME     DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS user_badges (
+  id         VARCHAR(36) PRIMARY KEY,
+  user_id    VARCHAR(36) NOT NULL,
+  badge_id   VARCHAR(36) NOT NULL,
+  awarded_at DATETIME    DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (user_id, badge_id),
+  FOREIGN KEY (user_id)  REFERENCES users(id)   ON DELETE CASCADE,
+  FOREIGN KEY (badge_id) REFERENCES badges(id)  ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS subscription_plans (
+  id          VARCHAR(36)  PRIMARY KEY,
+  slug        VARCHAR(50)  UNIQUE NOT NULL,
+  name        VARCHAR(100) NOT NULL,
+  price_usd   DOUBLE       NOT NULL DEFAULT 0,
+  duration_days INT        NOT NULL DEFAULT 30,
+  features    TEXT,
+  is_active   TINYINT(1)   DEFAULT 1,
+  created_at  DATETIME     DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS user_subscriptions (
+  id          VARCHAR(36) PRIMARY KEY,
+  user_id     VARCHAR(36) NOT NULL,
+  plan_id     VARCHAR(36) NOT NULL,
+  started_at  DATETIME    DEFAULT CURRENT_TIMESTAMP,
+  expires_at  DATETIME    NOT NULL,
+  status      VARCHAR(20) DEFAULT 'active',
+  transaction_id VARCHAR(36),
+  FOREIGN KEY (user_id)  REFERENCES users(id)              ON DELETE CASCADE,
+  FOREIGN KEY (plan_id)  REFERENCES subscription_plans(id)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS reward_settings (
+  id         VARCHAR(36)  PRIMARY KEY,
+  difficulty VARCHAR(20)  UNIQUE NOT NULL,
+  amount_usd DOUBLE       NOT NULL,
+  updated_by VARCHAR(36),
+  updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS ai_validation_logs (
+  id            VARCHAR(36) PRIMARY KEY,
+  submission_id VARCHAR(36) NOT NULL,
+  user_id       VARCHAR(36) NOT NULL,
+  challenge_id  VARCHAR(36) NOT NULL,
+  ai_score      INT,
+  ai_confidence INT,
+  ai_status     VARCHAR(20),
+  ai_response   TEXT,
+  model_used    VARCHAR(100),
+  latency_ms    INT,
+  created_at    DATETIME    DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+) ENGINE=InnoDB;
+
 SET FOREIGN_KEY_CHECKS=1;
 `;
 
@@ -358,6 +440,18 @@ const MIGRATIONS = [
   `ALTER TABLE challenges ADD COLUMN IF NOT EXISTS prize_usd                  DOUBLE       DEFAULT 0`,
   `ALTER TABLE challenges ADD COLUMN IF NOT EXISTS created_by                 VARCHAR(36)`,
   `ALTER TABLE challenges ADD COLUMN IF NOT EXISTS is_published               TINYINT(1)   DEFAULT 0`,
+
+  // users — streak and subscription fields
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS current_streak      INT          DEFAULT 0`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS longest_streak      INT          DEFAULT 0`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_activity_date  DATE`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS solved_count        INT          DEFAULT 0`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code       VARCHAR(20)`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_plan   VARCHAR(20)  DEFAULT 'free'`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_expires_at DATETIME`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS github_url          VARCHAR(255)`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS twitter_url         VARCHAR(255)`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS website_url         VARCHAR(255)`,
 ];
 
 // Admin seed — password: Ineza@12
@@ -383,6 +477,33 @@ VALUES (
 );
 INSERT IGNORE INTO wallets (id, user_id, balance, currency)
 VALUES ('wallet-test-00000000', 'user-test-00000000-0000-0000-000000000001', 50.0, 'USD');
+
+INSERT IGNORE INTO reward_settings (id, difficulty, amount_usd) VALUES
+('rs-easy',   'easy',   5.00),
+('rs-medium', 'medium', 15.00),
+('rs-hard',   'hard',   40.00);
+
+INSERT IGNORE INTO subscription_plans (id, slug, name, price_usd, duration_days, features) VALUES
+('plan-free', 'free', 'Free', 0, 36500, '["Unlimited easy challenges","5 medium challenges/day","Community support"]'),
+('plan-pro',  'pro',  'Pro',  9.99, 30, '["Unlimited all challenges","AI hints","Priority support","Ad-free","Bonus rewards x1.5","Download solutions"]'),
+('plan-elite','elite','Elite',29.99,30, '["Everything in Pro","Unlimited contests","1-on-1 mentoring","Custom badges","Rewards x2.0","Early access"]');
+
+INSERT IGNORE INTO badges (id, slug, name, description, icon, color, rarity) VALUES
+('badge-001','first_blood',   'First Blood',      'Solve your first challenge',           '🩸','bg-red-600',    'common'),
+('badge-002','quick_solver',  'Quick Solver',     'Solve a challenge in under 60 seconds','⚡','bg-yellow-500', 'rare'),
+('badge-003','streak_3',      '3-Day Streak',     'Solve challenges 3 days in a row',     '🔥','bg-orange-500', 'common'),
+('badge-004','streak_7',      'Week Warrior',     'Solve challenges 7 days in a row',     '💪','bg-orange-600', 'uncommon'),
+('badge-005','streak_30',     'Month Champion',   'Solve challenges 30 days in a row',    '🏆','bg-purple-600', 'legendary'),
+('badge-006','solved_10',     'Problem Solver',   'Solve 10 challenges',                  '🎯','bg-blue-500',   'common'),
+('badge-007','solved_50',     'Expert Coder',     'Solve 50 challenges',                  '💎','bg-cyan-500',   'uncommon'),
+('badge-008','solved_100',    'Code Master',      'Solve 100 challenges',                 '👑','bg-purple-500', 'rare'),
+('badge-009','solved_500',    'Legendary',        'Solve 500 challenges',                 '🌟','bg-yellow-400', 'legendary'),
+('badge-010','first_hard',    'Hard Mode',        'Solve your first hard challenge',      '🔴','bg-red-700',    'uncommon'),
+('badge-011','top_10',        'Top 10',           'Reach top 10 on global leaderboard',   '🏅','bg-gold-500',   'rare'),
+('badge-012','contest_winner','Contest Winner',   'Win a coding contest',                 '🥇','bg-yellow-600', 'legendary'),
+('badge-013','referral_5',    'Community Builder','Refer 5 friends to the platform',      '👥','bg-green-500',  'uncommon'),
+('badge-014','perfect_score', 'Perfectionist',    'Get 100% score 10 times in a row',     '💯','bg-emerald-500','rare'),
+('badge-015','night_owl',     'Night Owl',        'Solve a challenge after midnight',     '🦉','bg-indigo-600', 'common');
 `;
 
 // ─── Challenges seed (50 Medium + 50 Hard) ──────────────────────────────────

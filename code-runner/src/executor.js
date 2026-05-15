@@ -82,6 +82,20 @@ const LANG_CONFIG = {
     compile: (dir, src) => ({ cmd: 'kotlinc', args: [src, '-include-runtime', '-d', path.join(dir, 'solution.jar')] }),
     run:     (dir)      => ({ cmd: 'java', args: ['-jar', path.join(dir, 'solution.jar')] }),
   },
+  html: {
+    ext: 'html',
+    type: 'interpreted',
+    cmd: 'node',
+    // extract all <script>...</script> bodies, concatenate, run as JS
+    preprocess: (code) => {
+      const scripts = [];
+      const re = /<script(?:\s[^>]*)?>([^]*?)<\/script>/gi;
+      let m;
+      while ((m = re.exec(code)) !== null) scripts.push(m[1]);
+      return scripts.length ? scripts.join('\n') : '// no script found';
+    },
+    args: (f) => [f],
+  },
 };
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -135,10 +149,15 @@ async function runTestCase({ language, code, input, expected, timeLimit = 5000, 
   const cfg = LANG_CONFIG[language];
   if (!cfg) return { passed: false, stdout: '', stderr: `Unsupported language: ${language}`, timeMs: 0 };
 
+  // For HTML: extract <script> content and run as JS
+  const runCode = cfg.preprocess ? cfg.preprocess(code) : code;
+  // HTML runs as a .js file via node
+  const runExt  = cfg.preprocess ? 'js' : cfg.ext;
+
   const tmpDir   = path.join(os.tmpdir(), `ca-${uuid()}`);
   const fileName = cfg.type === 'compiled' && cfg.className
     ? `${cfg.className}.${cfg.ext}`
-    : `solution.${cfg.ext}`;
+    : `solution.${runExt}`;
   const srcFile  = path.join(tmpDir, fileName);
 
   try { fs.mkdirSync(tmpDir, { recursive: true }); } catch (e) {
@@ -146,7 +165,7 @@ async function runTestCase({ language, code, input, expected, timeLimit = 5000, 
   }
 
   try {
-    fs.writeFileSync(srcFile, code, 'utf8');
+    fs.writeFileSync(srcFile, runCode, 'utf8');
 
     // Compile if needed (use cached binary dir or compile fresh)
     if (cfg.type === 'compiled' && !compiled) {

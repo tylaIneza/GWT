@@ -2,6 +2,9 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { v4 as uuid }      from 'uuid';
 import { DatabaseService } from '../database/database.service';
 
+const MIN_WITHDRAWAL = 5;
+const MAX_WITHDRAWAL = 5000;
+
 @Injectable()
 export class WalletService {
   constructor(private db: DatabaseService) {}
@@ -86,6 +89,58 @@ export class WalletService {
     };
 
     return conn ? execute(conn) : this.db.transaction(execute);
+  }
+
+  async requestWithdrawal(userId: string, amount: number, method: string, accountDetails: any) {
+    if (amount < MIN_WITHDRAWAL) throw new BadRequestException(`Minimum withdrawal is $${MIN_WITHDRAWAL}`);
+    if (amount > MAX_WITHDRAWAL) throw new BadRequestException(`Maximum withdrawal per request is $${MAX_WITHDRAWAL}`);
+
+    const wallet = await this.db.queryOne('SELECT * FROM wallets WHERE user_id = ?', [userId]);
+    if (!wallet) throw new NotFoundException('Wallet not found');
+    if (parseFloat(wallet.balance) < amount) throw new BadRequestException('Insufficient balance');
+
+    const pending = await this.db.queryOne(
+      `SELECT id FROM withdrawal_requests WHERE user_id = ? AND status = 'pending'`, [userId],
+    );
+    if (pending) throw new BadRequestException('You already have a pending withdrawal request');
+
+    // Lock funds
+    await this.db.execute(
+      'UPDATE wallets SET balance = balance - ?, locked_balance = locked_balance + ? WHERE user_id = ?',
+      [amount, amount, userId],
+    );
+
+    const id = uuid();
+    await this.db.execute(
+      `INSERT INTO withdrawal_requests (id, user_id, amount, currency, method, account_details)
+       VALUES (?,?,?,?,?,?)`,
+      [id, userId, amount, wallet.currency, method, JSON.stringify(accountDetails)],
+    );
+    return { id, status: 'pending', amount, method };
+  }
+
+  async getUserWithdrawals(userId: string) {
+    return this.db.queryMany(
+      'SELECT * FROM withdrawal_requests WHERE user_id = ? ORDER BY created_at DESC LIMIT 20',
+      [userId],
+    );
+  }
+
+  async cancelWithdrawal(userId: string, requestId: string) {
+    const req = await this.db.queryOne(
+      `SELECT * FROM withdrawal_requests WHERE id = ? AND user_id = ? AND status = 'pending'`,
+      [requestId, userId],
+    );
+    if (!req) throw new NotFoundException('Pending withdrawal request not found');
+
+    await this.db.execute(
+      'UPDATE wallets SET balance = balance + ?, locked_balance = locked_balance - ? WHERE user_id = ?',
+      [req.amount, req.amount, userId],
+    );
+    await this.db.execute(
+      `UPDATE withdrawal_requests SET status = 'cancelled' WHERE id = ?`, [requestId],
+    );
+    return { success: true };
   }
 
   async distributePrizes(contestId: string) {

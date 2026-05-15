@@ -8,10 +8,13 @@ import { v4 as uuid }         from 'uuid';
 import { DatabaseService }    from '../database/database.service';
 import { ChallengesService }  from '../challenges/challenges.service';
 import { AntiCheatService }   from '../anti-cheat/anti-cheat.service';
+import { WalletService }      from '../wallet/wallet.service';
 import { SubmitDto }          from './dto/submit.dto';
-import { BetsService }        from '../bets/bets.service';
 import { SessionsService }    from '../sessions/sessions.service';
 import { AiService }          from '../ai/ai.service';
+import { BadgesService }      from '../badges/badges.service';
+
+const DEFAULT_REWARDS: Record<string, number> = { easy: 5, medium: 15, hard: 40 };
 
 @Injectable()
 export class SubmissionsService {
@@ -23,10 +26,18 @@ export class SubmissionsService {
     private challenges: ChallengesService,
     private antiCheat:  AntiCheatService,
     private http:       HttpService,
-    private bets:       BetsService,
+    private wallet:     WalletService,
     private sessions:   SessionsService,
     private ai:         AiService,
+    private badges:     BadgesService,
   ) {}
+
+  private async getDifficultyReward(difficulty: string): Promise<number> {
+    const row = await this.db.queryOne(
+      'SELECT amount_usd FROM reward_settings WHERE difficulty = ?', [difficulty],
+    );
+    return row?.amount_usd ?? DEFAULT_REWARDS[difficulty] ?? 5;
+  }
 
   async submit(dto: SubmitDto, userId: string, ip: string, userAgent: string) {
     const challenge = await this.db.queryOne(
@@ -34,15 +45,6 @@ export class SubmissionsService {
     );
     if (!challenge) throw new NotFoundException('Challenge not found');
 
-    const langs: string[] = typeof challenge.supported_languages === 'string'
-      ? JSON.parse(challenge.supported_languages)
-      : (challenge.supported_languages || ['javascript', 'python']);
-
-    if (!langs.includes(dto.language)) {
-      throw new BadRequestException(`Language ${dto.language} not supported`);
-    }
-
-    // Block re-solving in practice mode — contest re-submissions are allowed
     if (!dto.contest_id) {
       const already = await this.db.queryOne(
         `SELECT id FROM submissions WHERE user_id = ? AND challenge_id = ? AND status = 'accepted' LIMIT 1`,
@@ -51,7 +53,6 @@ export class SubmissionsService {
       if (already) throw new BadRequestException('already_solved');
     }
 
-    // Submission limit (per hour)
     const recent = await this.db.queryOne<{ cnt: number }>(
       `SELECT COUNT(*) AS cnt FROM submissions
        WHERE user_id = ? AND challenge_id = ?
@@ -62,13 +63,12 @@ export class SubmissionsService {
       throw new BadRequestException(`Submission limit reached (${challenge.max_submissions}/hour)`);
     }
 
-    // Cooldown
     const last = await this.db.queryOne(
       'SELECT submitted_at FROM submissions WHERE user_id = ? AND challenge_id = ? ORDER BY submitted_at DESC LIMIT 1',
       [userId, dto.challenge_id],
     );
     if (last) {
-      const elapsed = Date.now() - new Date(last.submitted_at).getTime();
+      const elapsed  = Date.now() - new Date(last.submitted_at).getTime();
       const cooldown = challenge.submission_cooldown_seconds * 1000;
       if (elapsed < cooldown) {
         throw new BadRequestException(`Wait ${Math.ceil((cooldown - elapsed) / 1000)}s before resubmitting`);
@@ -86,7 +86,6 @@ export class SubmissionsService {
       if (contest?.status !== 'active') throw new BadRequestException('Contest not active');
     }
 
-    // Validate session timing (throws if expired)
     if (!dto.contest_id) {
       await this.sessions.validateOrThrow(userId, dto.challenge_id);
     }
@@ -109,17 +108,45 @@ export class SubmissionsService {
     );
 
     const testCases = await this.challenges.getTestCasesForRunner(dto.challenge_id);
-    let execResult: any;
 
+    // Project challenge — no test cases, goes to manual review
+    if (testCases.length === 0) {
+      await this.db.execute(
+        `UPDATE submissions SET status = 'pending_review', score = 0 WHERE id = ?`, [subId],
+      );
+      const aiFeedback = await this.ai.generateFeedback({
+        challengeTitle:       challenge.title,
+        challengeDescription: challenge.description,
+        language:             dto.language,
+        code:                 dto.code,
+        status:               'pending_review',
+        score:                0,
+        passed:               0,
+        total:                0,
+        testResults:          [],
+      }).catch(() => null);
+
+      const pendingReward = await this.getDifficultyReward(challenge.difficulty);
+      return {
+        id:          subId,
+        status:      'pending_review',
+        score:       0,
+        passed:      0,
+        total:       0,
+        results:     [],
+        reward:      pendingReward,
+        ai_feedback: aiFeedback,
+      };
+    }
+
+    // Algorithmic challenge — run against test cases
+    let execResult: any;
     try {
       const resp = await firstValueFrom(
         this.http.post(`${this.codeRunnerUrl}/execute`, {
           language:  dto.language,
           code:      dto.code,
-          testCases: testCases.map(tc => ({
-            input:    tc.input,
-            expected: tc.expected_output,
-          })),
+          testCases: testCases.map(tc => ({ input: tc.input, expected: tc.expected_output })),
           timeLimit: challenge.time_limit_ms,
           memLimit:  challenge.memory_limit_mb,
         }, { timeout: 35000 }),
@@ -158,42 +185,85 @@ export class SubmissionsService {
        JSON.stringify(execResult.results || []), riskScore, subId],
     );
 
+    let reward: number | null = null;
+    let newBadges: string[] = [];
     if (status === 'accepted' && !dto.contest_id) {
       await this.sessions.complete(userId, dto.challenge_id);
-    }
+      reward = await this.getDifficultyReward(challenge.difficulty);
+
+      // subscription bonus multiplier
+      const userRow = await this.db.queryOne(
+        'SELECT subscription_plan, solved_count, current_streak FROM users WHERE id = ?', [userId],
+      );
+      const multiplier = userRow?.subscription_plan === 'elite' ? 2.0
+        : userRow?.subscription_plan === 'pro' ? 1.5 : 1.0;
+      reward = Math.round(reward * multiplier * 100) / 100;
+
+      const ref = `REWARD-${subId}-${Date.now()}`;
+      await this.wallet.credit(userId, reward, 'challenge_reward', ref, 'internal', null, {
+        challenge_id: dto.challenge_id,
+        submission_id: subId,
+        difficulty: challenge.difficulty,
+        multiplier,
+      }).catch(e => this.logger.error('Reward credit failed', e.message));
+      await this.db.execute(
+        'UPDATE users SET total_earnings = total_earnings + ?, solved_count = solved_count + 1 WHERE id = ?',
+        [reward, userId],
+      );
+
+      // Update streak
+      const streak = await this.badges.updateStreak(userId);
+
+      // Check and award badges
+      const updatedUser = await this.db.queryOne(
+        'SELECT solved_count FROM users WHERE id = ?', [userId],
+      );
+      const isFirstSolve = (updatedUser?.solved_count || 0) === 1;
+      newBadges = await this.badges.checkAndAwardBadges(userId, {
+        isFirstSolve,
+        isHardSolve:   challenge.difficulty === 'hard',
+        solvedCount:   updatedUser?.solved_count || 0,
+        currentStreak: streak.current,
+        solvedAtHour:  new Date().getHours(),
+        timeTakenMs:   execResult.timeMs,
+        scoreIs100:    score === 100,
+      });
+
+    }  // end if accepted
 
     if (dto.contest_id && status === 'accepted') {
       await this.updateLeaderboard(dto.contest_id, userId, score, execResult.timeMs || 0);
     }
 
-    // Resolve any open bet for this challenge
-    const betResult = await this.bets.resolveBet(
-      userId, dto.challenge_id, subId, status === 'accepted',
-    ).catch(() => null);
-
     const sampleResults = (execResult.results || []).map((r: any, i: number) => ({
-      test_case:  i + 1,
-      passed:     r.passed,
-      is_sample:  testCases[i]?.is_sample,
-      stdout:     testCases[i]?.is_sample ? r.stdout : undefined,
-      expected:   testCases[i]?.is_sample ? testCases[i].expected_output : undefined,
-      time_ms:    r.timeMs,
+      test_case: i + 1,
+      passed:    r.passed,
+      is_sample: testCases[i]?.is_sample,
+      stdout:    testCases[i]?.is_sample ? r.stdout    : undefined,
+      expected:  testCases[i]?.is_sample ? testCases[i].expected_output : undefined,
+      time_ms:   r.timeMs,
     }));
 
-    // Generate AI feedback automatically (non-blocking — runs in background)
     const aiFeedback = await this.ai.generateFeedback({
       challengeTitle:       challenge.title,
       challengeDescription: challenge.description,
       language:             dto.language,
       code:                 dto.code,
-      status,
-      score,
-      passed,
-      total,
+      status, score, passed, total,
       testResults:          sampleResults,
     }).catch(() => null);
 
-    return { id: subId, status, score, passed, total, results: sampleResults, risk_score: riskScore, time_ms: execResult.timeMs, bet: betResult, ai_feedback: aiFeedback };
+    // Log AI validation (after aiFeedback is available)
+    if (aiFeedback && status === 'accepted') {
+      this.db.execute(
+        `INSERT INTO ai_validation_logs (id, submission_id, user_id, challenge_id, ai_score, ai_status, ai_response, model_used, latency_ms)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+        [uuid(), subId, userId, dto.challenge_id, score, status,
+         JSON.stringify(aiFeedback), 'gemini-1.5-flash', 0],
+      ).catch(() => {});
+    }
+
+    return { id: subId, status, score, passed, total, results: sampleResults, risk_score: riskScore, time_ms: execResult.timeMs, reward, ai_feedback: aiFeedback, new_badges: newBadges };
   }
 
   async findByUser(userId: string, challengeId?: string) {
@@ -227,7 +297,6 @@ export class SubmissionsService {
       [newScore, newTimeMs, contestId, userId],
     );
 
-    // Recompute ranks
     const all = await this.db.queryMany(
       'SELECT user_id FROM contest_participants WHERE contest_id = ? ORDER BY score DESC, total_time_ms ASC',
       [contestId],
@@ -240,7 +309,7 @@ export class SubmissionsService {
     }
 
     const user = await this.db.queryOne('SELECT name FROM users WHERE id = ?', [userId]);
-    const rank = all.findIndex(x => x.user_id === userId) + 1;
+    const rank  = all.findIndex(x => x.user_id === userId) + 1;
 
     await this.db.execute(
       `INSERT INTO leaderboards (id, contest_id, user_id, user_name, rank_position, score, total_time_ms)

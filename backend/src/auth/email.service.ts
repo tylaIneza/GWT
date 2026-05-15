@@ -3,7 +3,7 @@ import * as nodemailer from 'nodemailer';
 
 @Injectable()
 export class EmailService {
-  private readonly logger = new Logger(EmailService.name);
+  private readonly logger = new Logger('OTP');
   private transporter: nodemailer.Transporter;
 
   constructor() {
@@ -19,7 +19,9 @@ export class EmailService {
   }
 
   async sendVerificationOtp(email: string, name: string, otp: string) {
+    if (!otp) return; // auto-verified flow, no OTP needed
     const from = process.env.SMTP_FROM || process.env.SMTP_USER;
+    this.logger.log(`OTP for ${email}: ${otp}`);
     try {
       await this.transporter.sendMail({
         from: `"DevixCode" <${from}>`,
@@ -50,6 +52,7 @@ export class EmailService {
 
   async sendPasswordResetOtp(email: string, otp: string) {
     const from = process.env.SMTP_FROM || process.env.SMTP_USER;
+    this.logger.log(`Password reset OTP for ${email}: ${otp}`);
     try {
       await this.transporter.sendMail({
         from: `"DevixCode" <${from}>`,

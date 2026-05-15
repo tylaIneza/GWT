@@ -1,24 +1,43 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Globe, ChevronDown } from 'lucide-react';
+import { Eye, EyeOff, ArrowRight, CheckCircle, Zap, ChevronDown, Search } from 'lucide-react';
 import api from '@/lib/api';
-import { useI18n } from '@/lib/i18n-context';
-import { LANGUAGES, COUNTRIES } from '@/lib/i18n';
+import { setAuth } from '@/lib/auth';
+import { COUNTRIES } from '@/lib/i18n';
+
+const PERKS = [
+  { icon: '💰', text: 'Earn real money for every correct solution' },
+  { icon: '🏆', text: 'Compete in global tournaments with prize pools' },
+  { icon: '🤖', text: 'AI-powered feedback on every submission' },
+  { icon: '🎖️', text: 'Unlock badges and climb the leaderboard' },
+  { icon: '⚡', text: 'Instant payouts to 150+ countries' },
+];
+
+const MARQUEE_BADGES = [
+  '🩸 First Blood', '⚡ Quick Solver', '🔥 3-Day Streak', '💎 100 Solved',
+  '🏆 Contest Winner', '🦉 Night Owl', '⭐ Perfect Score', '🌍 Global Top 10',
+];
 
 export default function RegisterPage() {
   const router = useRouter();
-  const { t, lang, setLang } = useI18n();
   const [form, setForm] = useState({
-    name: '', email: '', password: '',
-    phone: '', country_code: 'US',
+    name: '', email: '', password: '', country_code: 'RW',
   });
-  const [loading,      setLoading]      = useState(false);
-  const [error,        setError]        = useState('');
-  const [showLang,     setShowLang]     = useState(false);
-  const [showCountry,  setShowCountry]  = useState(false);
+  const [loading,       setLoading]       = useState(false);
+  const [error,         setError]         = useState('');
+  const [showPass,      setShowPass]      = useState(false);
+  const [showCountry,   setShowCountry]   = useState(false);
   const [countrySearch, setCountrySearch] = useState('');
+  const [mounted,       setMounted]       = useState(false);
+  const [perkIdx,       setPerkIdx]       = useState(0);
+
+  useEffect(() => {
+    setMounted(true);
+    const iv = setInterval(() => setPerkIdx(i => (i + 1) % PERKS.length), 2500);
+    return () => clearInterval(iv);
+  }, []);
 
   const selectedCountry = COUNTRIES.find(c => c.code === form.country_code) || COUNTRIES[0];
   const filteredCountries = COUNTRIES.filter(c =>
@@ -26,163 +45,266 @@ export default function RegisterPage() {
     c.code.toLowerCase().includes(countrySearch.toLowerCase())
   );
 
+  const passwordStrength = (p: string) => {
+    let score = 0;
+    if (p.length >= 8) score++;
+    if (/[A-Z]/.test(p)) score++;
+    if (/[0-9]/.test(p)) score++;
+    if (/[^A-Za-z0-9]/.test(p)) score++;
+    return score;
+  };
+  const strength = passwordStrength(form.password);
+  const strengthLabel = ['', 'Weak', 'Fair', 'Good', 'Strong'][strength];
+  const strengthColor = ['', 'bg-red-500', 'bg-yellow-500', 'bg-blue-500', 'bg-green-500'][strength];
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (form.password.length < 8) {
-      setError('Password must be at least 8 characters'); return;
-    }
+    if (form.password.length < 8) { setError('Password must be at least 8 characters'); return; }
     setLoading(true); setError('');
     try {
-      await api.post('/auth/register', {
-        name: form.name,
-        email: form.email,
-        password: form.password,
-        phone: form.phone || undefined,
-        country_code: form.country_code,
+      const res = await api.post('/auth/register', {
+        name: form.name, email: form.email,
+        password: form.password, country_code: form.country_code,
       });
-      router.push(`/auth/verify-email?email=${encodeURIComponent(form.email)}`);
+      setAuth(res.data.token, res.data.user);
+      router.push('/dashboard');
     } catch (e: any) {
       setError(e.response?.data?.message || e.response?.data?.error || 'Registration failed');
     } finally { setLoading(false); }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6 bg-gray-950">
-      {/* Language selector */}
-      <div className="fixed top-4 right-4">
-        <div className="relative">
-          <button onClick={() => setShowLang(v => !v)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-700 bg-gray-900 text-gray-400 text-sm hover:border-green-700 transition-colors">
-            <Globe className="w-3.5 h-3.5" />
-            {LANGUAGES.find(l => l.code === lang)?.flag}
-          </button>
-          {showLang && (
-            <div className="absolute right-0 top-full mt-1 bg-gray-900 border border-gray-700 rounded-xl shadow-xl z-50 py-1 min-w-[160px]">
-              {LANGUAGES.map(l => (
-                <button key={l.code} onClick={() => { setLang(l.code); setShowLang(false); }}
-                  className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-sm hover:bg-gray-800 ${lang === l.code ? 'text-green-400' : 'text-gray-300'}`}>
-                  <span>{l.flag}</span>{l.name}
-                </button>
+    <div className="min-h-screen flex bg-gray-950">
+
+      {/* ── LEFT PANEL ─────────────────────────────────────────── */}
+      <div className="hidden lg:flex lg:w-[44%] relative flex-col bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 border-r border-gray-800 overflow-hidden">
+
+        <div className="absolute inset-0 opacity-[0.03]"
+          style={{ backgroundImage: 'linear-gradient(#22c55e 1px,transparent 1px),linear-gradient(90deg,#22c55e 1px,transparent 1px)', backgroundSize: '40px 40px' }} />
+        <div className="absolute top-20 left-10 w-64 h-64 bg-green-500/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute bottom-10 right-5  w-56 h-56 bg-emerald-500/8 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="relative z-10 flex flex-col h-full p-10">
+
+          {/* Logo */}
+          <Link href="/" className="flex items-center gap-3 mb-10">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-green-400 to-emerald-600 flex items-center justify-center font-black text-xl shadow-lg shadow-green-900/40 animate-pulse-glow">D</div>
+            <span className="text-xl font-black text-white">DevixCode</span>
+            <span className="text-xs bg-green-900/30 border border-green-800/50 text-green-400 rounded-full px-2 py-0.5">Global</span>
+          </Link>
+
+          <div className={`mb-8 ${mounted ? 'animate-slide-up' : 'opacity-0'}`}>
+            <h2 className="text-3xl font-black text-white leading-tight mb-3">
+              Start earning<br />
+              <span className="bg-gradient-to-r from-green-400 to-emerald-300 bg-clip-text text-transparent">
+                with your code
+              </span>
+            </h2>
+            <p className="text-gray-400 text-sm leading-relaxed">
+              Create your free account and start solving challenges in 60 seconds.
+            </p>
+          </div>
+
+          {/* Animated perks */}
+          <div className={`mb-6 ${mounted ? 'animate-slide-up delay-100' : 'opacity-0'}`}>
+            <div className="bg-gray-800/50 border border-gray-700/50 rounded-2xl p-4 h-16 flex items-center overflow-hidden">
+              {PERKS.map((p, i) => (
+                <div key={i}
+                  className={`absolute flex items-center gap-3 pr-4 transition-all duration-500 ${
+                    i === perkIdx ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
+                  }`}>
+                  <span className="text-2xl">{p.icon}</span>
+                  <p className="text-sm text-gray-200 font-medium">{p.text}</p>
+                </div>
               ))}
             </div>
-          )}
+          </div>
+
+          {/* All perks list */}
+          <div className={`space-y-3 mb-8 ${mounted ? 'animate-slide-up delay-200' : 'opacity-0'}`}>
+            {PERKS.map((p, i) => (
+              <div key={i} className={`flex items-center gap-3 transition-all duration-300 ${i === perkIdx ? 'opacity-100' : 'opacity-40'}`}>
+                <CheckCircle className={`w-4 h-4 shrink-0 ${i === perkIdx ? 'text-green-400' : 'text-gray-600'}`} />
+                <span className="text-sm text-gray-300">{p.text}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Badge marquee */}
+          <div className={`mt-auto ${mounted ? 'animate-slide-up delay-300' : 'opacity-0'}`}>
+            <p className="text-xs text-gray-600 mb-3 uppercase tracking-wider font-semibold">Earn these badges</p>
+            <div className="flex flex-wrap gap-2">
+              {MARQUEE_BADGES.map((b, i) => (
+                <span key={i} className="text-xs bg-gray-800/70 border border-gray-700/50 text-gray-400 rounded-full px-2.5 py-1">
+                  {b}
+                </span>
+              ))}
+            </div>
+          </div>
+
         </div>
       </div>
 
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <Link href="/" className="inline-flex items-center gap-2 mb-6">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-green-500 to-emerald-700 flex items-center justify-center font-black text-xl">D</div>
-            <span className="font-bold text-white text-xl">DevixCode</span>
-          </Link>
-          <h1 className="text-2xl font-bold text-white">{t('auth_register_title')}</h1>
-          <p className="text-gray-500 text-sm mt-1">{t('auth_register_subtitle')}</p>
+      {/* ── RIGHT PANEL — FORM ─────────────────────────────────── */}
+      <div className="flex-1 flex flex-col items-center justify-center p-6 lg:p-10 overflow-y-auto">
+
+        <div className="lg:hidden flex items-center gap-2 mb-8">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-green-400 to-emerald-600 flex items-center justify-center font-black">D</div>
+          <span className="text-lg font-black text-white">DevixCode</span>
         </div>
 
-        <form onSubmit={submit} className="card p-8 space-y-4">
+        <div className={`w-full max-w-md ${mounted ? 'animate-slide-up' : 'opacity-0'}`}>
+
+          <div className="mb-7">
+            <h1 className="text-3xl font-black text-white mb-2">Create account</h1>
+            <p className="text-gray-500 text-sm">Free forever · No credit card required</p>
+          </div>
+
           {error && (
-            <div className="bg-red-900/30 border border-red-800 text-red-400 rounded-xl px-4 py-3 text-sm">
+            <div className="mb-5 flex items-center gap-3 bg-red-900/20 border border-red-800/50 text-red-400 rounded-2xl px-4 py-3 text-sm">
+              <span className="w-5 h-5 rounded-full border border-red-500/50 flex items-center justify-center text-xs shrink-0">!</span>
               {error}
             </div>
           )}
 
-          {/* Name */}
-          <div>
-            <label className="label">{t('auth_register_name')}</label>
-            <input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
-              className="input" placeholder="John Doe" required autoComplete="name" />
-          </div>
+          <form onSubmit={submit} className="space-y-4">
 
-          {/* Email */}
-          <div>
-            <label className="label">{t('auth_login_email')}</label>
-            <input type="email" value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
-              className="input" placeholder="you@example.com" required autoComplete="email" />
-          </div>
+            {/* Name */}
+            <div>
+              <label className="block text-sm font-medium text-gray-400 mb-2">Full name</label>
+              <input
+                type="text" value={form.name}
+                onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
+                placeholder="Your full name" required
+                className="w-full bg-gray-900 border border-gray-700 rounded-2xl px-4 py-3.5 text-white placeholder-gray-600
+                           focus:outline-none focus:border-green-500 focus:ring-2 focus:ring-green-500/20
+                           hover:border-gray-600 transition-all text-sm"
+              />
+            </div>
 
-          {/* Country picker */}
-          <div>
-            <label className="label">{t('auth_register_country')}</label>
-            <div className="relative">
-              <button type="button" onClick={() => setShowCountry(v => !v)}
-                className="input flex items-center justify-between cursor-pointer">
-                <span className="flex items-center gap-2">
-                  <span>{selectedCountry.flag}</span>
-                  <span>{selectedCountry.name}</span>
-                </span>
-                <ChevronDown className="w-4 h-4 text-gray-500" />
-              </button>
-              {showCountry && (
-                <div className="absolute top-full left-0 right-0 mt-1 bg-gray-900 border border-gray-700 rounded-xl shadow-xl z-50 overflow-hidden">
-                  <div className="p-2 border-b border-gray-700">
-                    <input
-                      value={countrySearch}
-                      onChange={e => setCountrySearch(e.target.value)}
-                      placeholder="Search country..."
-                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-green-500"
-                      autoFocus
-                    />
-                  </div>
-                  <div className="max-h-48 overflow-y-auto">
-                    {filteredCountries.map(c => (
-                      <button key={c.code} type="button"
-                        onClick={() => { setForm(p => ({ ...p, country_code: c.code })); setShowCountry(false); setCountrySearch(''); }}
-                        className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-gray-800 transition-colors ${form.country_code === c.code ? 'text-green-400' : 'text-gray-300'}`}>
-                        <span>{c.flag}</span>
-                        <span>{c.name}</span>
-                        <span className="ml-auto text-gray-600 text-xs">{c.currency}</span>
-                      </button>
+            {/* Email */}
+            <div>
+              <label className="block text-sm font-medium text-gray-400 mb-2">Email address</label>
+              <input
+                type="email" value={form.email}
+                onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
+                placeholder="you@example.com" required autoComplete="email"
+                className="w-full bg-gray-900 border border-gray-700 rounded-2xl px-4 py-3.5 text-white placeholder-gray-600
+                           focus:outline-none focus:border-green-500 focus:ring-2 focus:ring-green-500/20
+                           hover:border-gray-600 transition-all text-sm"
+              />
+            </div>
+
+            {/* Password */}
+            <div>
+              <label className="block text-sm font-medium text-gray-400 mb-2">Password</label>
+              <div className="relative">
+                <input
+                  type={showPass ? 'text' : 'password'} value={form.password}
+                  onChange={e => setForm(p => ({ ...p, password: e.target.value }))}
+                  placeholder="Min. 8 characters" required autoComplete="new-password"
+                  className="w-full bg-gray-900 border border-gray-700 rounded-2xl px-4 py-3.5 pr-12 text-white placeholder-gray-600
+                             focus:outline-none focus:border-green-500 focus:ring-2 focus:ring-green-500/20
+                             hover:border-gray-600 transition-all text-sm"
+                />
+                <button type="button" onClick={() => setShowPass(v => !v)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 transition-colors">
+                  {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+              {form.password && (
+                <div className="mt-2 flex items-center gap-2">
+                  <div className="flex-1 flex gap-1">
+                    {[1,2,3,4].map(i => (
+                      <div key={i} className={`h-1 flex-1 rounded-full transition-all duration-300 ${i <= strength ? strengthColor : 'bg-gray-700'}`} />
                     ))}
                   </div>
+                  <span className={`text-xs font-medium ${strength >= 3 ? 'text-green-400' : strength === 2 ? 'text-yellow-400' : 'text-red-400'}`}>
+                    {strengthLabel}
+                  </span>
                 </div>
               )}
             </div>
-          </div>
 
-          {/* Phone */}
-          <div>
-            <label className="label">{t('auth_register_phone')}</label>
-            <div className="flex gap-2">
-              <div className="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-gray-400 text-sm whitespace-nowrap">
-                {selectedCountry.dialCode}
+            {/* Country */}
+            <div>
+              <label className="block text-sm font-medium text-gray-400 mb-2">Country</label>
+              <div className="relative">
+                <button type="button" onClick={() => setShowCountry(v => !v)}
+                  className="w-full bg-gray-900 border border-gray-700 rounded-2xl px-4 py-3.5 text-white
+                             focus:outline-none focus:border-green-500 hover:border-gray-600 transition-all text-sm
+                             flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <span className="text-lg">{selectedCountry?.flag}</span>
+                    <span>{selectedCountry?.name}</span>
+                  </span>
+                  <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform ${showCountry ? 'rotate-180' : ''}`} />
+                </button>
+
+                {showCountry && (
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl z-50 overflow-hidden">
+                    <div className="p-2 border-b border-gray-800">
+                      <div className="flex items-center gap-2 bg-gray-800 rounded-xl px-3 py-2">
+                        <Search className="w-3.5 h-3.5 text-gray-500" />
+                        <input autoFocus type="text" placeholder="Search country…"
+                          value={countrySearch}
+                          onChange={e => setCountrySearch(e.target.value)}
+                          className="bg-transparent text-sm text-white placeholder-gray-500 outline-none flex-1" />
+                      </div>
+                    </div>
+                    <div className="max-h-52 overflow-y-auto">
+                      {filteredCountries.slice(0, 50).map(c => (
+                        <button key={c.code} type="button"
+                          onClick={() => { setForm(p => ({ ...p, country_code: c.code })); setShowCountry(false); setCountrySearch(''); }}
+                          className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-gray-800 transition-colors text-left ${form.country_code === c.code ? 'text-green-400 bg-green-900/10' : 'text-gray-300'}`}>
+                          <span className="text-base">{c.flag}</span>
+                          <span>{c.name}</span>
+                          {form.country_code === c.code && <CheckCircle className="w-3.5 h-3.5 ml-auto text-green-400" />}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
-              <input
-                value={form.phone}
-                onChange={e => setForm(p => ({ ...p, phone: e.target.value }))}
-                className="input flex-1"
-                placeholder="Phone number"
-                type="tel"
-                autoComplete="tel"
-              />
             </div>
+
+            {/* Submit */}
+            <button type="submit" disabled={loading}
+              className="w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-500 active:bg-green-700
+                         disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-3.5 rounded-2xl
+                         transition-all duration-200 shadow-lg shadow-green-900/30 hover:shadow-green-900/50
+                         hover:-translate-y-0.5 active:translate-y-0 mt-1">
+              {loading ? (
+                <>
+                  <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                  </svg>
+                  Creating account…
+                </>
+              ) : (
+                <>Create free account <ArrowRight className="w-4 h-4" /></>
+              )}
+            </button>
+
+            <p className="text-center text-xs text-gray-600">
+              By creating an account you agree to our Terms of Service and Privacy Policy.
+            </p>
+          </form>
+
+          <div className="flex items-center gap-3 my-5">
+            <div className="flex-1 h-px bg-gray-800" />
+            <span className="text-xs text-gray-600">already have an account?</span>
+            <div className="flex-1 h-px bg-gray-800" />
           </div>
 
-          {/* Password */}
-          <div>
-            <label className="label">{t('auth_login_password')}</label>
-            <input type="password" value={form.password} onChange={e => setForm(p => ({ ...p, password: e.target.value }))}
-              className="input" placeholder="Min 8 chars" required minLength={8} autoComplete="new-password" />
-            {form.password && form.password.length > 0 && (
-              <div className="flex gap-1 mt-2">
-                {[form.password.length >= 8, /[A-Z]/.test(form.password), /[0-9]/.test(form.password), /[^A-Za-z0-9]/.test(form.password)].map((ok, i) => (
-                  <div key={i} className={`h-1 flex-1 rounded-full transition-colors ${ok ? 'bg-green-500' : 'bg-gray-700'}`} />
-                ))}
-              </div>
-            )}
-          </div>
+          <Link href="/auth/login"
+            className="w-full flex items-center justify-center gap-2 bg-gray-800 hover:bg-gray-700 border border-gray-700
+                       text-gray-200 font-semibold py-3.5 rounded-2xl transition-all text-sm hover:-translate-y-0.5">
+            Sign in instead
+          </Link>
 
-          <button type="submit" disabled={loading} className="btn-primary w-full justify-center py-3 mt-2">
-            {loading ? t('auth_register_loading') : t('auth_register_button')}
-          </button>
-
-          <p className="text-center text-xs text-gray-600">18+ · Skill-based competitions only · <a href="#" className="underline">Terms</a></p>
-          <p className="text-center text-gray-500 text-sm">
-            {t('auth_register_have_account')}{' '}
-            <Link href="/auth/login" className="text-green-400 hover:text-green-300 font-medium">
-              {t('auth_register_signin')}
-            </Link>
-          </p>
-        </form>
+        </div>
       </div>
     </div>
   );
